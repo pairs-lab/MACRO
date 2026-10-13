@@ -1,0 +1,39 @@
+{
+  "format": "shared-core-execution-plan",
+  "description": "R3 places the spoon in the sink while R2 moves bread from the lower counter to the centre counter.",
+  "robot_plans": {
+    "R1": [],
+    "R2": [3, 4],
+    "R3": [1, 2]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "action": "pick",
+      "object": "spoon",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 2,
+      "action": "place",
+      "object": "spoon",
+      "target": "sinkbasin",
+      "node": [1]
+    },
+    {
+      "id": 3,
+      "action": "pick",
+      "object": "bread",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 4,
+      "action": "place",
+      "object": "bread",
+      "target": "CounterTop|-00.02|+00.96|+00.51",
+      "node": [3]
+    }
+  ]
+}

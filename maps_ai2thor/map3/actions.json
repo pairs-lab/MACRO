@@ -1,0 +1,67 @@
+{
+  "format": "shared-core-execution-plan",
+  "description": "Accessible apple and bread branches cross between the bowl, fridge, and sink regions.",
+  "robot_plans": {
+    "R1": [1, 3, 7, 8],
+    "R2": [2, 5],
+    "R3": [4, 6]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "action": "pick",
+      "object": "apple",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 2,
+      "action": "pick",
+      "object": "bread",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 3,
+      "action": "place",
+      "object": "apple",
+      "target": "bowl",
+      "node": [1]
+    },
+    {
+      "id": 4,
+      "action": "open",
+      "object": "fridge",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 5,
+      "action": "place",
+      "object": "bread",
+      "target": "fridge",
+      "node": [2, 4]
+    },
+    {
+      "id": 6,
+      "action": "close",
+      "object": "fridge",
+      "target": "",
+      "node": [5]
+    },
+    {
+      "id": 7,
+      "action": "pick",
+      "object": "bowl",
+      "target": "",
+      "node": [3]
+    },
+    {
+      "id": 8,
+      "action": "place",
+      "object": "bowl",
+      "target": "sinkbasin",
+      "node": [6, 7]
+    }
+  ]
+}

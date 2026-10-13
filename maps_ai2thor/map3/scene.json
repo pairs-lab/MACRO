@@ -1,0 +1,10 @@
+{
+  "name": "map3",
+  "description": "FloorPlan3 crossing-flow mission between sink, bowl, and fridge interaction regions.",
+  "scene": "FloorPlan3",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "show_camera": false,
+  "grid_view": false
+}

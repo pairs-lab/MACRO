@@ -1,0 +1,7 @@
+{
+  "scene": "FloorPlan5",
+  "description": "Bowl moved toward the accessible end of its existing countertop. Default robot spawns and the other objects are unchanged.",
+  "objects": [
+    {"name": "Bowl", "position": {"x": -0.20, "y": 1.13, "z": 0.54}, "apply": true, "force_kinematic": true}
+  ]
+}

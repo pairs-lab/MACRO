@@ -1,0 +1,1145 @@
+{
+  "description": "Edit robot x/z directly. For a pickupable object, edit x/y/z and set apply=true. Fixed objects are listed for reference.",
+  "scene": "FloorPlan2",
+  "robots": [
+    {
+      "id": "R1",
+      "position": {
+        "x": 0.92,
+        "z": -0.26
+      },
+      "rotation": 0,
+      "apply": true
+    },
+    {
+      "id": "R2",
+      "position": {
+        "x": -0.46,
+        "z": 2.17
+      },
+      "rotation": 120,
+      "apply": true
+    },
+    {
+      "id": "R3",
+      "position": {
+        "x": 0.90,
+        "z": 0.83
+      },
+      "rotation": 240,
+      "apply": true
+    }
+  ],
+  "objects": [
+    {
+      "name": "Apple",
+      "instance": 0,
+      "object_id": "Apple|-01.65|+00.81|+00.07",
+      "position": {
+        "x": -1.6506,
+        "y": 0.8054,
+        "z": 0.0725
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Bowl",
+      "instance": 0,
+      "object_id": "Bowl|+00.28|+00.92|+01.09",
+      "position": {
+        "x": 0.2765,
+        "y": 0.9161,
+        "z": 1.0912
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Bread",
+      "instance": 0,
+      "object_id": "Bread|+00.26|+00.99|-00.08",
+      "position": {
+        "x": -1.7,
+        "y": 1.02,
+        "z": -1.44
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": true,
+      "force_kinematic": true
+    },
+    {
+      "name": "ButterKnife",
+      "instance": 0,
+      "object_id": "ButterKnife|+01.67|+00.69|-00.11",
+      "position": {
+        "x": 0.45,
+        "y": 1.05,
+        "z": -1.44
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": true,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 0,
+      "object_id": "Cabinet|+00.41|+00.48|+00.45",
+      "position": {
+        "x": 0.41,
+        "y": 0.475,
+        "z": 0.445
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 1,
+      "object_id": "Cabinet|+00.50|+00.48|-01.15",
+      "position": {
+        "x": 0.495,
+        "y": 0.475,
+        "z": -1.15
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 2,
+      "object_id": "Cabinet|+01.39|+00.48|-01.15",
+      "position": {
+        "x": 1.39,
+        "y": 0.475,
+        "z": -1.15
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 3,
+      "object_id": "Cabinet|+01.71|+02.02|-01.45",
+      "position": {
+        "x": 1.7055,
+        "y": 2.02,
+        "z": -1.4492
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 4,
+      "object_id": "Cabinet|+01.79|+02.02|-00.82",
+      "position": {
+        "x": 1.79,
+        "y": 2.02,
+        "z": -0.82
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 5,
+      "object_id": "Cabinet|-00.50|+00.48|-01.15",
+      "position": {
+        "x": -0.495,
+        "y": 0.475,
+        "z": -1.15
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 6,
+      "object_id": "Cabinet|-00.63|+02.02|-01.45",
+      "position": {
+        "x": -0.6271,
+        "y": 2.02,
+        "z": -1.4492
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 7,
+      "object_id": "Cabinet|-01.39|+00.48|-01.15",
+      "position": {
+        "x": -1.39,
+        "y": 0.475,
+        "z": -1.15
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cabinet",
+      "instance": 8,
+      "object_id": "Cabinet|-01.70|+02.02|-01.45",
+      "position": {
+        "x": -1.704,
+        "y": 2.0226,
+        "z": -1.4537
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "CellPhone",
+      "instance": 0,
+      "object_id": "CellPhone|-00.31|+00.92|+01.29",
+      "position": {
+        "x": -0.3086,
+        "y": 0.9158,
+        "z": 1.2878
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Chair",
+      "instance": 0,
+      "object_id": "Chair|00.00|+00.00|+01.24",
+      "position": {
+        "x": -0.0,
+        "y": 0.0006,
+        "z": 1.2428
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "CoffeeMachine",
+      "instance": 0,
+      "object_id": "CoffeeMachine|+01.36|+00.90|-01.60",
+      "position": {
+        "x": 1.3555,
+        "y": 0.9,
+        "z": -1.5961
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "CounterTop",
+      "instance": 0,
+      "object_id": "CounterTop|+00.00|+00.95|-01.51",
+      "position": {
+        "x": 0.002,
+        "y": 0.947,
+        "z": -1.513
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "CounterTop",
+      "instance": 1,
+      "object_id": "CounterTop|-00.02|+00.96|+00.51",
+      "position": {
+        "x": -0.015,
+        "y": 0.9611,
+        "z": 0.506
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Cup",
+      "instance": 0,
+      "object_id": "Cup|+00.90|+01.67|-01.61",
+      "position": {
+        "x": 0.8968,
+        "y": 1.6681,
+        "z": -1.6067
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "DishSponge",
+      "instance": 0,
+      "object_id": "DishSponge|-00.55|+00.92|-01.39",
+      "position": {
+        "x": -0.549,
+        "y": 0.9239,
+        "z": -1.387
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 0,
+      "object_id": "Drawer|+00.81|+00.48|-01.16",
+      "position": {
+        "x": 0.805,
+        "y": 0.475,
+        "z": -1.16
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 1,
+      "object_id": "Drawer|+01.50|+00.14|+00.60",
+      "position": {
+        "x": 1.5,
+        "y": 0.1408,
+        "z": 0.5999
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 2,
+      "object_id": "Drawer|+01.50|+00.20|+01.22",
+      "position": {
+        "x": 1.5,
+        "y": 0.2,
+        "z": 1.22
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 3,
+      "object_id": "Drawer|+01.50|+00.20|-00.02",
+      "position": {
+        "x": 1.5,
+        "y": 0.1965,
+        "z": -0.02
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 4,
+      "object_id": "Drawer|+01.50|+00.31|+00.60",
+      "position": {
+        "x": 1.5,
+        "y": 0.306,
+        "z": 0.6
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 5,
+      "object_id": "Drawer|+01.50|+00.43|-00.02",
+      "position": {
+        "x": 1.5,
+        "y": 0.4292,
+        "z": -0.02
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 6,
+      "object_id": "Drawer|+01.50|+00.52|+01.22",
+      "position": {
+        "x": 1.5,
+        "y": 0.52,
+        "z": 1.22
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 7,
+      "object_id": "Drawer|+01.50|+00.54|+00.60",
+      "position": {
+        "x": 1.5,
+        "y": 0.539,
+        "z": 0.6
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 8,
+      "object_id": "Drawer|+01.50|+00.60|-00.02",
+      "position": {
+        "x": 1.5,
+        "y": 0.603,
+        "z": -0.02
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 9,
+      "object_id": "Drawer|+01.50|+00.63|+00.61",
+      "position": {
+        "x": 1.5,
+        "y": 0.63,
+        "z": 0.6051
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 10,
+      "object_id": "Drawer|+01.50|+00.63|-00.02",
+      "position": {
+        "x": 1.5,
+        "y": 0.63,
+        "z": -0.019
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 11,
+      "object_id": "Drawer|+01.50|+00.78|+01.22",
+      "position": {
+        "x": 1.5,
+        "y": 0.7826,
+        "z": 1.22
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Drawer",
+      "instance": 12,
+      "object_id": "Drawer|-00.70|+00.48|-01.16",
+      "position": {
+        "x": -0.6965,
+        "y": 0.475,
+        "z": -1.16
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Egg",
+      "instance": 0,
+      "object_id": "Egg|+00.13|+00.95|-00.17",
+      "position": {
+        "x": 0.1345,
+        "y": 0.955,
+        "z": -0.1691
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Faucet",
+      "instance": 0,
+      "object_id": "Faucet|+00.00|+00.91|-01.68",
+      "position": {
+        "x": 0.0,
+        "y": 0.9064,
+        "z": -1.6815
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Floor",
+      "instance": 0,
+      "object_id": "Floor|+00.00|+00.00|+00.00",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Fork",
+      "instance": 0,
+      "object_id": "Fork|+01.69|+00.90|+01.45",
+      "position": {
+        "x": 1.6937,
+        "y": 0.9017,
+        "z": 1.4481
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Fridge",
+      "instance": 0,
+      "object_id": "Fridge|-01.76|+00.00|00.00",
+      "position": {
+        "x": -1.764,
+        "y": 0.0,
+        "z": -0.001
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "GarbageCan",
+      "instance": 0,
+      "object_id": "GarbageCan|-01.80|+00.01|+01.33",
+      "position": {
+        "x": -1.796,
+        "y": 0.0092,
+        "z": 1.3303
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Kettle",
+      "instance": 0,
+      "object_id": "Kettle|+01.68|+00.90|+00.09",
+      "position": {
+        "x": 1.681,
+        "y": 0.9044,
+        "z": 0.0909
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Knife",
+      "instance": 0,
+      "object_id": "Knife|+00.60|+00.91|-01.44",
+      "position": {
+        "x": 0.5999,
+        "y": 0.9069,
+        "z": -1.444
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Ladle",
+      "instance": 0,
+      "object_id": "Ladle|+01.79|+00.93|+01.13",
+      "position": {
+        "x": 1.7857,
+        "y": 0.9267,
+        "z": 1.1296
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Lettuce",
+      "instance": 0,
+      "object_id": "Lettuce|-01.71|+00.82|-00.14",
+      "position": {
+        "x": -1.712,
+        "y": 0.8199,
+        "z": -0.1364
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "LightSwitch",
+      "instance": 0,
+      "object_id": "LightSwitch|-00.15|+01.29|+03.70",
+      "position": {
+        "x": -0.154,
+        "y": 1.291,
+        "z": 3.7
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Microwave",
+      "instance": 0,
+      "object_id": "Microwave|+01.93|+00.90|-00.77",
+      "position": {
+        "x": 1.933,
+        "y": 0.9006,
+        "z": -0.7669
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": true,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Mug",
+      "instance": 0,
+      "object_id": "Mug|-00.24|+00.92|-00.26",
+      "position": {
+        "x": -0.235,
+        "y": 0.915,
+        "z": -0.256
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Pan",
+      "instance": 0,
+      "object_id": "Pan|-01.29|+00.90|-01.35",
+      "position": {
+        "x": -1.2864,
+        "y": 0.9008,
+        "z": -1.3487
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "PepperShaker",
+      "instance": 0,
+      "object_id": "PepperShaker|+01.89|+00.90|+00.03",
+      "position": {
+        "x": 1.889,
+        "y": 0.9001,
+        "z": 0.035
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Plate",
+      "instance": 0,
+      "object_id": "Plate|+01.32|+01.67|-01.60",
+      "position": {
+        "x": 1.323,
+        "y": 1.6701,
+        "z": -1.5954
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Pot",
+      "instance": 0,
+      "object_id": "Pot|+00.89|+00.90|-01.41",
+      "position": {
+        "x": 0.8895,
+        "y": 0.9032,
+        "z": -1.4124
+      },
+      "pickupable": true,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Potato",
+      "instance": 0,
+      "object_id": "Potato|+00.33|+00.94|+01.31",
+      "position": {
+        "x": 0.3274,
+        "y": 0.94,
+        "z": 1.3115
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "SaltShaker",
+      "instance": 0,
+      "object_id": "SaltShaker|+02.01|+00.90|+00.03",
+      "position": {
+        "x": 2.0098,
+        "y": 0.9001,
+        "z": 0.0287
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Sink",
+      "instance": 0,
+      "object_id": "Sink|+00.00|+00.89|-01.44",
+      "position": {
+        "x": 0.0,
+        "y": 0.894,
+        "z": -1.435
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "SinkBasin",
+      "instance": 0,
+      "object_id": "Sink|+00.00|+00.89|-01.44|SinkBasin",
+      "position": {
+        "x": -0.015,
+        "y": 0.737,
+        "z": -1.4355
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "SoapBottle",
+      "instance": 0,
+      "object_id": "SoapBottle|-00.56|+00.90|-01.57",
+      "position": {
+        "x": -0.561,
+        "y": 0.9001,
+        "z": -1.572
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Spatula",
+      "instance": 0,
+      "object_id": "Spatula|+01.78|+00.91|-00.13",
+      "position": {
+        "x": 1.7764,
+        "y": 0.9074,
+        "z": -0.1287
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Spoon",
+      "instance": 0,
+      "object_id": "Spoon|+01.62|+00.90|+01.40",
+      "position": {
+        "x": 1.6209,
+        "y": 0.9003,
+        "z": 1.4029
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 0,
+      "object_id": "StoveBurner|+01.77|+00.90|+00.38",
+      "position": {
+        "x": 1.765,
+        "y": 0.9029,
+        "z": 0.3846
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 1,
+      "object_id": "StoveBurner|+01.77|+00.90|+00.60",
+      "position": {
+        "x": 1.765,
+        "y": 0.9029,
+        "z": 0.6015
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 2,
+      "object_id": "StoveBurner|+01.77|+00.90|+00.82",
+      "position": {
+        "x": 1.765,
+        "y": 0.9029,
+        "z": 0.8192
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 3,
+      "object_id": "StoveBurner|+01.98|+00.90|+00.38",
+      "position": {
+        "x": 1.9753,
+        "y": 0.9029,
+        "z": 0.3846
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 4,
+      "object_id": "StoveBurner|+01.98|+00.90|+00.60",
+      "position": {
+        "x": 1.9753,
+        "y": 0.9029,
+        "z": 0.6015
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveBurner",
+      "instance": 5,
+      "object_id": "StoveBurner|+01.98|+00.90|+00.82",
+      "position": {
+        "x": 1.9753,
+        "y": 0.9029,
+        "z": 0.8192
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 0,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.46",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.4625
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 1,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.52",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.5171
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 2,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.57",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.5706
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 3,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.63",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.6255
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 4,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.68",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.681
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "StoveKnob",
+      "instance": 5,
+      "object_id": "StoveKnob|+01.60|+00.92|+00.74",
+      "position": {
+        "x": 1.6025,
+        "y": 0.9173,
+        "z": 0.7396
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Toaster",
+      "instance": 0,
+      "object_id": "Toaster|+01.98|+00.90|-00.34",
+      "position": {
+        "x": 1.977,
+        "y": 0.9001,
+        "z": -0.3358
+      },
+      "pickupable": false,
+      "receptacle": true,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Tomato",
+      "instance": 0,
+      "object_id": "Tomato|+00.17|+00.97|-00.28",
+      "position": {
+        "x": 0.1685,
+        "y": 0.9745,
+        "z": -0.2813
+      },
+      "pickupable": true,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Window",
+      "instance": 0,
+      "object_id": "Window|+02.22|+01.57|-00.39",
+      "position": {
+        "x": 2.2177,
+        "y": 1.5651,
+        "z": -0.385
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Window",
+      "instance": 1,
+      "object_id": "Window|-00.01|+01.58|-01.82",
+      "position": {
+        "x": -0.011,
+        "y": 1.583,
+        "z": -1.822
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    },
+    {
+      "name": "Window",
+      "instance": 2,
+      "object_id": "Window|-03.24|+01.62|+02.69",
+      "position": {
+        "x": -3.24,
+        "y": 1.616,
+        "z": 2.693
+      },
+      "pickupable": false,
+      "receptacle": false,
+      "openable": false,
+      "apply": false,
+      "force_kinematic": true
+    }
+  ]
+}

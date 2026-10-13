@@ -1,0 +1,8 @@
+{
+  "scene": "FloorPlan3",
+  "description": "Bowl moved toward the front of its existing countertop for manipulation with padded navigation. Default robot spawns are unchanged.",
+  "objects": [
+    {"name": "Bowl", "position": {"x": -1.50, "y": 1.32, "z": 0.27}, "apply": true, "force_kinematic": true},
+    {"name": "Apple", "position": {"x": -1.50, "y": 1.39, "z": -1.16}, "apply": true, "force_kinematic": true}
+  ]
+}

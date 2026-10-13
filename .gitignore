@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments and local configuration
+.env
+.env.*
+.venv/
+venv/
+env/
+
+.benchmarks/
+# Local research code, datasets and documentation are not published.
+/benchmarks/
+/experiments/
+/docs/
+/tests/local/
+/tests/test_component_ablation.py
+/tests/test_candidate_ranking_audit.py
+/tests/test_censored_prediction_policy.py
+/tests/test_anticipated_delay.py
+/plot.py
+/run.sh
+/.agents/
+/.codex/
+# Generated reports and experiment artifacts.
+benchmark/
+benchmarks/results/
+experiment/
+result/
+results/
+videos/
+maps/figures/
+/assignment_runtime.pdf
+/assignment_runtime.png
+# Generated navigation data
+.navigation_cache/
+
+# Local API credentials
+src/LLM/api_key.txt
+*.pem
+*.key
+credentials*.json
+secrets*.json
+*.lic
+*.p12
+*.pfx
+*.tar.gz
+*.zip
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Runtime output
+*.log
+crash.dmp

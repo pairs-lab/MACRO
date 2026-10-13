@@ -1,0 +1,38 @@
+{
+  "name": "map1",
+  "description": "All robots pick and travel concurrently. On contact R2 waits for R1 to finish placing apple in the sink; R1 then clears the path for R2. R2 places bread in the open microwave, closes it, waits 2 seconds, opens it and retrieves bread; R3 places tomato in the bowl.",
+  "scene": "FloorPlan1",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "show_camera": false,
+  "grid_view": false,
+  "initial_object_states": [{"name": "Microwave", "instance": 0, "is_open": true}],
+  "robot_placements": [
+    {"id": "R2", "position": {"x": -1.15, "z": 1.13}, "rotation": 120, "apply": true},
+    {"id": "R1", "position": {"x": 0.67, "z": -1.61}, "rotation": 0, "apply": true}
+  ],
+  "object_placements": [
+    {
+      "name": "Tomato",
+      "instance": 0,
+      "position": {"x": 0.33, "y": 1.151225209236145, "z": 0.88},
+      "apply": true,
+      "force_kinematic": true
+    },
+    {
+      "name": "Apple",
+      "instance": 0,
+      "position": {"x": -0.3850502371788025, "y": 1.1370350122451782, "z": -0.8119600415229797},
+      "apply": true,
+      "force_kinematic": true
+    },
+    {
+      "name": "Bowl",
+      "instance": 0,
+      "position": {"x": -0.19, "z": 0.79},
+      "apply": true,
+      "force_kinematic": true
+    }
+  ]
+}

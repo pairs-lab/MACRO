@@ -1,0 +1,4 @@
+-r requirements.txt
+ai2thor
+networkx
+google-genai

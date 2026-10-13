@@ -1,0 +1,108 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map4.",
+  "objects": [
+    {
+      "name": "garbage",
+      "cell": [
+        13,
+        26
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        70,
+        70,
+        70
+      ],
+      "blocking": false
+    },
+    {
+      "name": "apple",
+      "cell": [
+        -10,
+        10
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    },
+    {
+      "name": "bowl",
+      "cell": [
+        -1,
+        32
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "fridge",
+      "cell": [
+        -9,
+        -11
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        164,
+        214,
+        132
+      ],
+      "blocking": false
+    }
+  ],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        -16,
+        3
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    },
+    {
+      "id": "R2",
+      "start_cell": [
+        5,
+        9
+      ],
+      "color_bgr": [
+        235,
+        140,
+        30
+      ]
+    },
+    {
+      "id": "R3",
+      "start_cell": [
+        6,
+        28
+      ],
+      "color_bgr": [
+        60,
+        190,
+        70
+      ]
+    }
+  ],
+  "tasks": [
+    {"id": 1, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "apple", "duration": 1.0, "node": []},
+    {"id": 2, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "apple", "target": "bowl", "duration": 1.0, "node": [1]},
+    {"id": 3, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "garbage", "duration": 1.0, "node": []},
+    {"id": 4, "candidate": ["R1", "R2", "R3"], "action": "open", "object": "fridge", "duration": 1.0, "node": [3]},
+    {"id": 5, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "garbage", "target": "fridge", "duration": 1.0, "node": [3, 4]},
+    {"id": 6, "candidate": ["R1", "R2", "R3"], "action": "close", "object": "fridge", "duration": 1.0, "node": [5]}
+  ]
+}

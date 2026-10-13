@@ -1,0 +1,20 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map2.",
+  "objects": [],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        -6,
+        6
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    }
+  ],
+  "tasks": []
+}
