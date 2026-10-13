@@ -48,13 +48,11 @@ class DynamicReleaseTests(unittest.TestCase):
         # Later service at another goal must not inflate occupancy here.
         self.assertGreater(evaluation['task_travel_times'][3], 0.)
 
-    def test_existing_dynamic_mode_remains_unguarded_and_new_mode_is_opt_in(self):
+    def test_current_model_uses_guarded_release_and_five_second_budget(self):
         with patch('simulations.standalone.dynamic_release.refine_dynamic_release_events') as refine:
-            for model, guarded in [('dynamic_events', False), ('dynamic_events_v1', False),
-                                   ('dynamic_events_guarded', True)]:
+            for model, guarded in [('dynamic_events_guarded', True)]:
                 callback = _make_release_refiner([], [], {}, {}, frozenset(), .1, 1., 1., set(), model)
                 callback([], {}, None, {}, 0.)
-                self.assertIs(refine.call_args.kwargs['use_release_guards'], guarded)
                 self.assertEqual(refine.call_args.kwargs['budget_s'], 5. if guarded else .30)
 
     def test_future_goal_occupancy_delays_arrival_but_initial_body_is_not_overridden(self):
@@ -119,7 +117,6 @@ class DynamicReleaseTests(unittest.TestCase):
             preferred_paths={'R1': [(0, 0), (1, 0), (2, 0), (3, 0)],
                              'R2': [(1, 1), (1, 0), (0, 0)]})
         pool = [candidate, dict(deepcopy(candidate), candidate_id='b')]
-        previous_pool = deepcopy(pool)
         stats = {}
         with patch('simulations.standalone.dynamic_release.estimate_future_delays',
                    return_value=({}, {'censored': False})):
@@ -137,16 +134,6 @@ class DynamicReleaseTests(unittest.TestCase):
             relocation_delay_by_robot=candidate['delay_by_robot'])
         self.assertEqual(candidate['estimated_makespan'], full[0])
         self.assertEqual(candidate['release_prediction']['finish_times'], full[2])
-        with patch('simulations.standalone.dynamic_release.estimate_future_delays',
-                   return_value=({}, {'censored': False})):
-            refine_dynamic_release_events(previous_pool, robots=robots, tasks=tasks,
-                task_status=common['task_status'], objects=common['objects'],
-                navigation_cells=common['navigation_cells'], robot_radius=.4,
-                grid_size=1., speed=1., participants={'R1', 'R2'}, stats={},
-                search_deadline=None, baseline_finishes={}, baseline_distance=0.,
-                budget_s=1., use_release_guards=False)
-        self.assertEqual(previous_pool[0]['delay_by_robot']['R2'], 1.)
-        self.assertEqual(previous_pool[0]['preferred_paths'], candidate['preferred_paths'])
 
     def test_successor_departure_reduces_wait_vs_stationary_body(self):
         tasks, robots, common, candidate = departure_fixture()
@@ -230,7 +217,7 @@ class DynamicReleaseTests(unittest.TestCase):
     def test_local_policies_never_construct_dynamic_refiner(self):
         with patch('simulations.standalone.app._make_release_refiner', side_effect=AssertionError('DAG leakage')):
             for policy in ('local_distance', 'local_delay', 'reroute_only'):
-                for model in ('dynamic_events', 'dynamic_events_guarded'):
+                for model in ('dynamic_events_guarded',):
                     with redirect_stdout(io.StringIO()):
                         try:
                             _compute_conflict_plan(**fixtures.fixture(), selection_policy=policy,
@@ -241,7 +228,7 @@ class DynamicReleaseTests(unittest.TestCase):
 
     def test_candidate_geometry_remains_identical(self):
         pools = []
-        for model in ('events', 'dynamic_events', 'dynamic_events_guarded'):
+        for model in ('dynamic_events_guarded',):
             with redirect_stdout(io.StringIO()):
                 plan = _compute_conflict_plan(**fixtures.fixture(), release_prediction_model=model)
             pools.append([c['geometry_key'] for c in plan['search_stats']['candidate_evaluations']])

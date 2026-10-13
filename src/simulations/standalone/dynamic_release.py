@@ -110,8 +110,8 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
                                   objects, navigation_cells, robot_radius,
                                   grid_size, speed, participants, stats,
                                   search_deadline, baseline_finishes,
-                                  baseline_distance, horizon=5., budget_s=.30,
-                                  use_release_guards=True, hypothesis_workers=1,
+                                  baseline_distance, horizon=5., budget_s=5.,
+                                  hypothesis_workers=1,
                                   _allow_single=False):
     """Compare the whole pool with one common, two-pass reservation model."""
     if not 3. <= horizon <= 5.:
@@ -121,8 +121,6 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
     started = time.perf_counter()
     deadline = min(started+budget_s, search_deadline if search_deadline is not None else math.inf)
     model = 'guarded-release-checkpoints-stationary-chain-incremental-DAG-v5'
-    if not use_release_guards:
-        model = 'moving-reservations-current-plus-successor-incremental-DAG'
     def fallback(reason):
         stats['release_prediction'] = dict(status='fallback', reason=reason, model=model,
                                            wall_time_s=time.perf_counter()-started)
@@ -141,7 +139,7 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
             robot_radius=robot_radius, grid_size=grid_size, speed=speed,
             participants=participants, search_deadline=deadline,
             baseline_finishes=baseline_finishes, baseline_distance=baseline_distance,
-            horizon=horizon, budget_s=budget_s, use_release_guards=use_release_guards)
+            horizon=horizon, budget_s=budget_s)
         return _parallel_refinement(candidates, kwargs, stats, deadline, started,
                                     min(hypothesis_workers, len(candidates)))
     by_id = {r.robot_id: r for r in robots}
@@ -168,31 +166,26 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
             return fallback('dynamic_event_budget')
         release_info = {}
         delays = dict(candidate.get('delay_by_robot', {}))
-        if use_release_guards:
-            try:
-                delays, release_info = predict_release_events(
-                    candidate, by_id, 2*robot_radius/grid_size, speed,
-                    navigation=navigation_cells, objects=objects, deadline=deadline,
-                    moving_body_continuation=True, cached_route=cached_route,
-                    stationary_service_by_robot=service_chains)
-                release_info['stationary_service_by_robot'] = service_chains
-                release_info['continuation_model'] = 'body-aware-at-predicted-release-waypoint'
-                release_info['executor_route_selection_replayed'] = False
-            except TimeoutError:
-                return fallback('dynamic_event_budget')
+        try:
+            delays, release_info = predict_release_events(
+                candidate, by_id, 2*robot_radius/grid_size, speed,
+                navigation=navigation_cells, objects=objects, deadline=deadline,
+                moving_body_continuation=True, cached_route=cached_route,
+                stationary_service_by_robot=service_chains)
+            release_info['stationary_service_by_robot'] = service_chains
+            release_info['continuation_model'] = 'body-aware-at-predicted-release-waypoint'
+            release_info['executor_route_selection_replayed'] = False
+        except TimeoutError:
+            return fallback('dynamic_event_budget')
         forecast_paths = dict(candidate['preferred_paths'])
         forecast_paths.update(release_info.get('continuation_paths', {}))
         barrier = sum(float(step['delay']) for step in candidate.get('relocations', ()))
         if candidate['strategy'] == 'relocate':
-            held = set(participants) | set(candidate.get('moved_agents', ()))
-            if not use_release_guards:
-                for robot_id in held:
-                    delays[robot_id] = barrier
             # Match the executor's release/continuation guards before scanning
             # future encounters. Staging completion alone is NOT a release.
             # Fixed service robots keep executing during staging.
             for robot_id in list(delays):
-                if (use_release_guards or robot_id in held) and by_id[robot_id].phase == 'acting':
+                if by_id[robot_id].phase == 'acting':
                     delays.pop(robot_id, None)
         affected = set(delays) | set(candidate.get('rerouted_agents', ())) | set(candidate.get('moved_agents', ()))
         priority = candidate.get('priority_robot')

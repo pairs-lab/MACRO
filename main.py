@@ -131,8 +131,8 @@ def parse_args():
                         help="CPU processes for independent moving conflict groups (default: robot count)")
     parser.add_argument("--hypothesis-workers", type=int, default=1,
                         help="CPU processes for candidate scoring inside each conflict group")
-    parser.add_argument("--release-prediction-model", choices=("events", "dynamic_events_guarded"),
-                        default="events", help="Select guarded explicitly for the final paper method")
+    parser.add_argument("--release-prediction-model", choices=("dynamic_events_guarded",),
+                        default="dynamic_events_guarded", help="Current guarded prediction model")
     return parser.parse_args()
 
 

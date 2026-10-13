@@ -9,7 +9,7 @@ import math
 import time
 
 from .planner import path_length, preferred_path_to_object, _astar_around_robot_bodies, _interaction_goals
-from .relocation_search import _remaining_dag_cost, _timed_path_conflict, _path_conflict
+from .relocation_search import _timed_path_conflict, _path_conflict
 
 
 def distance_prefix(path, limit):
@@ -260,72 +260,3 @@ def predict_release_events(candidate, robots, clearance, speed, *, navigation=No
         'future_conflicts_modelled': False,
         'moving_body_continuation': moving_body_continuation,
     }
-
-
-def refine_release_events(candidates, *, robots, tasks, task_status, objects,
-                          navigation_cells, robot_radius, grid_size, speed,
-                          participants, stats, search_deadline,
-                          baseline_finishes, baseline_distance, budget_s=.15):
-    """Inject predicted waits into the same incremental remaining DAG."""
-    started = time.perf_counter()
-    deadline = min(started + budget_s, search_deadline if search_deadline is not None else math.inf)
-    def fallback(reason):
-        stats['release_prediction'] = dict(status='fallback', reason=reason,
-                                           wall_time_s=time.perf_counter()-started,
-                                           model='certified-bounded-release-events')
-        return candidates
-    # Single-candidate conflicts cannot gain ranking quality from refinement.
-    if len(candidates) < 2:
-        stats['release_prediction'] = dict(status='skipped_single_candidate', wall_time_s=0.)
-        return candidates
-    if time.perf_counter() >= deadline:
-        return fallback('event_budget')
-    by_id = {robot.robot_id: robot for robot in robots}
-    positions = {robot.robot_id: robot.cell for robot in robots}
-    kwargs = dict(tasks=tasks, task_status=task_status, robots_by_id=by_id,
-                  objects=objects, navigation_cells=navigation_cells,
-                  grid_size=grid_size, speed_cells_per_second=speed,
-                  include_travel=True, return_details=True, return_evaluation=True)
-    baseline = _remaining_dag_cost(**kwargs, positions=positions, preferred_paths={},
-                                   relocation_delay_by_robot={})[3]
-    pending = []
-    for candidate in candidates:
-        if time.perf_counter() >= deadline:
-            return fallback('event_budget')
-        try:
-            delays, diagnostics = predict_release_events(candidate, by_id, 2*robot_radius/grid_size, speed,
-                                                         navigation=navigation_cells, objects=objects, deadline=deadline)
-        except TimeoutError:
-            return fallback('event_budget')
-        if diagnostics['unknown_agents']:
-            return fallback('uncertified_continuation')
-        changed = set(delays) | set(candidate.get('rerouted_agents', ())) | set(candidate.get('moved_agents', ()))
-        if candidate.get('priority_robot') is not None:
-            changed.add(candidate['priority_robot'])
-        final = dict(positions)
-        final.update(candidate.get('final_positions', {}))
-        forecast_paths = dict(candidate['preferred_paths'])
-        forecast_paths.update(diagnostics.get('continuation_paths', {}))
-        estimate = _remaining_dag_cost(
-            **kwargs, positions=final, preferred_paths=forecast_paths,
-            relocation_delay_by_robot=delays, affected_robot_ids=changed,
-            baseline_evaluation=baseline)
-        pending.append((candidate, delays, diagnostics, estimate))
-    if time.perf_counter() >= deadline:
-        return fallback('event_budget')
-    # Commit transactionally; never mix event timing with partially updated scores.
-    for candidate, delays, diagnostics, estimate in pending:
-        makespan, distance, finishes, evaluation = estimate
-        distance += sum(step['distance'] for step in candidate.get('relocations', ()))
-        candidate['nominal_estimated_makespan'] = candidate['estimated_makespan']
-        candidate.update(estimated_makespan=makespan,
-                         estimated_remaining_DAG_makespan=makespan,
-                         total_distance=distance,
-                         additional_distance=max(0., distance-baseline_distance),
-                         total_delay=sum(max(0., f-baseline_finishes.get(t, f)) for t, f in finishes.items()),
-                         delay_by_robot=delays,
-                         release_prediction={**diagnostics, 'estimated_makespan': makespan,
-                                             'directly_changed_robots': sorted(delays)})
-    stats['release_prediction'] = dict(status='applied', model='bounded-release-events-plus-incremental-DAG',
-                                      candidates_evaluated=len(pending), wall_time_s=time.perf_counter()-started)
-    return candidates

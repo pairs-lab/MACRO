@@ -170,14 +170,7 @@ def estimate_future_delays(*, candidate, evaluation, robots, tasks, speed,
                            grid_size, robot_radius, horizon=5., deadline=None,
                            task_limit=None, wait_before_navigation=False,
                            robot_order=None, window_after_staging=False,
-                           include_future_occupancy=False,
-                           censored_policy='horizon_wait'):
-    # Experimental scoring policy, not a feasibility relaxation. An unresolved
-    # encounter has no predicted release time. Keep its exposure in diagnostics
-    # instead of treating the end of the observation window as a release event.
-    # The stable default and all live execution guards remain unchanged.
-    if censored_policy not in {'horizon_wait', 'resolved_only', 'resolved_boundary'}:
-        raise ValueError('Unknown censored delay policy')
+                           include_future_occupancy=False):
     started=time.perf_counter()
     barrier=sum(float(s["delay"]) for s in candidate.get("relocations",()))
     window_end = barrier + horizon if window_after_staging else horizon
@@ -203,7 +196,6 @@ def estimate_future_delays(*, candidate, evaluation, robots, tasks, speed,
             clipped_start=max(segment.start,barrier)
             duration=segment.end-clipped_start
             blocked_by=set();censored=False
-            last_blocked_at = None
             while at < window_end-1e-9:
                 if deadline is not None and time.perf_counter() >= deadline:
                     raise TimeoutError("anticipated delay budget exhausted")
@@ -212,7 +204,6 @@ def estimate_future_delays(*, candidate, evaluation, robots, tasks, speed,
                 blockers=table.blockers(moved,2*robot_radius/grid_size)
                 if not blockers:
                     break
-                last_blocked_at = at
                 blocked_by.update(b.robot for b in blockers)
                 # Advance to the latest occupied segment boundary, recheck all
                 # reservations. Simultaneous blockers are not summed twice.
@@ -222,30 +213,8 @@ def estimate_future_delays(*, candidate, evaluation, robots, tasks, speed,
                 at=release
             if at >= window_end-1e-9 and blocked_by:
                 censored=True
-            if (censored_policy == 'resolved_boundary' and not censored
-                    and last_blocked_at is not None):
-                # A blocker segment's END is a conservative departure time,
-                # not the first collision-free departure: the query robot may
-                # reach the occupied location only partway along its edge.
-                # Refine only an already-resolved encounter. Maintain a swept-
-                # checked safe upper endpoint; never extrapolate past H or
-                # infer feasibility for a censored encounter. Non-monotonic
-                # reservations may hide an earlier safe interval; this is NOT
-                # claimed to be globally earliest departure.
-                low, high = last_blocked_at, at
-                for _ in range(10):
-                    if deadline is not None and time.perf_counter() >= deadline:
-                        raise TimeoutError('anticipated delay budget exhausted')
-                    middle = (low + high) / 2.
-                    query = Segment(segment.robot, segment.task, middle, middle+duration,
-                        segment.position(clipped_start), segment.last, segment.task_start+shift)
-                    if table.blockers(query, 2*robot_radius/grid_size):
-                        low = middle
-                    else:
-                        high = middle
-                at = high
             observed_delta=max(0.,at-original_at)
-            delta = 0. if censored and censored_policy == 'resolved_only' else observed_delta
+            delta = observed_delta
             if observed_delta:
                 if delta:
                     delays[segment.task]=delays.get(segment.task,0.)+delta
@@ -253,12 +222,9 @@ def estimate_future_delays(*, candidate, evaluation, robots, tasks, speed,
                 observations.append(dict(robot_id=robot_id,task_id=segment.task,
                     delay_s=delta,observed_delay_s=observed_delta,
                     blocked_by=sorted(blocked_by),censored=censored))
-            if censored and censored_policy == 'resolved_only':
-                # Do not forecast downstream motion past an unresolved contact.
-                break
     return delays,dict(horizon_s=horizon,status="estimated",observations=observations,
         censored=any(o["censored"] for o in observations),
         delay_by_task=delays,wall_time_s=time.perf_counter()-started,
         reservation_segments=len(segments),model="continuous-swept-immutable-reservations-one-pass",
         window_start_s=barrier, window_end_s=window_end, task_limit=task_limit,
-        wait_before_navigation=wait_before_navigation, censored_policy=censored_policy)
+        wait_before_navigation=wait_before_navigation)

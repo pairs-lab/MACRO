@@ -34,8 +34,6 @@ from .planner import (
 )
 from .relocation_search import (
     _candidate_diagnostic,
-    _candidate_stable_key,
-    _select_resolution_candidate,
     _path_conflict,
     _route_exits_without_reentry,
     _timed_path_conflict,
@@ -249,15 +247,13 @@ def _compute_conflict_plan(
     diagnostics=None,
     use_dag_priority=True,
     incremental_dag_evaluation=True,
-    use_dag_lookahead=False,
     use_anticipated_delays=False,
     anticipated_delay_horizon=5.,
     preserve_priority_corridor=True,
     use_release_prediction=True,
-    release_prediction_model="events",
+    release_prediction_model="dynamic_events_guarded",
     hypothesis_workers=1,
     negotiation_state=None,
-    verify_release=True,
     parallel_reserved_paths=None,
     execution_candidate_refiner=None,
 ):
@@ -388,13 +384,9 @@ def _compute_conflict_plan(
         incremental_dag_evaluation=incremental_dag_evaluation,
         dag_candidate_refiner=(
             execution_candidate_refiner if execution_candidate_refiner is not None else
-            _make_dag_refiner(dag_robots, tasks, task_status, objects,
-                navigation_cells, robot_radius, grid_size,
-                speed_cells_per_second, cluster_ids)
-            if selection_policy == "dag_aware" and use_dag_lookahead else
             _make_release_refiner(dag_robots,tasks,task_status,objects,navigation_cells,
                 robot_radius,grid_size,speed_cells_per_second,cluster_ids,release_prediction_model,
-                anticipated_delay_horizon, verification_enabled=verify_release,
+                anticipated_delay_horizon,
                 hypothesis_workers=hypothesis_workers)
             if selection_policy == "dag_aware" and use_release_prediction
                 and preserve_priority_corridor and not use_anticipated_delays else None
@@ -410,58 +402,23 @@ def _compute_conflict_plan(
     return plan
 
 
-def _make_release_refiner(robots,tasks,task_status,objects,navigation_cells,
-                          robot_radius,grid_size,speed,participants,model="events",horizon=5.,
-                          verification_enabled=True, hypothesis_workers=1):
-    if model == "events":
-        from .release_events import refine_release_events as refine_release_predictions
-    elif model == "replay":
-        from .dag_lookahead import refine_release_predictions
-    elif model == "dynamic_events_verified":
-        from .verified_release import refine_verified_release
-        def refine_release_predictions(candidates, **kwargs):
-            return refine_verified_release(candidates, **kwargs, horizon=horizon,
-                                           verification_enabled=verification_enabled)
-    elif model in {"dynamic_events", "dynamic_events_v1", "dynamic_events_guarded"}:
-        from .dynamic_release import refine_dynamic_release_events
-        def refine_release_predictions(candidates, **kwargs):
-            return refine_dynamic_release_events(candidates, **kwargs, horizon=horizon,
-                                                  use_release_guards=model == "dynamic_events_guarded",
-                                                  hypothesis_workers=hypothesis_workers,
-                                                  budget_s=5.0 if model == "dynamic_events_guarded" else .30)
-    else:
-        raise ValueError(f"Unknown release prediction model: {model}")
-    def refine(candidates,stats,deadline,baseline_finishes,baseline_distance):
-        return refine_release_predictions(candidates,robots=robots,tasks=tasks,
-            task_status=task_status,objects=objects,navigation_cells=navigation_cells,
-            robot_radius=robot_radius,grid_size=grid_size,speed=speed,participants=participants,
-            stats=stats,search_deadline=deadline,baseline_finishes=baseline_finishes,
-            baseline_distance=baseline_distance)
-    return refine
+def _make_release_refiner(robots, tasks, task_status, objects, navigation_cells,
+                          robot_radius, grid_size, speed, participants,
+                          model="dynamic_events_guarded", horizon=5., hypothesis_workers=1):
+    """Use the current guarded, candidate-conditioned timing predictor."""
+    if model != "dynamic_events_guarded":
+        raise ValueError(f"Unsupported release prediction model: {model}")
+    from .dynamic_release import refine_dynamic_release_events
 
-
-def _make_dag_refiner(robots, tasks, task_status, objects, navigation_cells,
-                      robot_radius, grid_size, speed, participants):
-    from .dag_lookahead import refine_candidates, replay_candidate, successor_reservation_risk
-    def refine(candidates, stats, search_deadline, baseline_finishes, baseline_distance):
-        if not successor_reservation_risk(candidates, robots=robots, tasks=tasks,
-            task_status=task_status, objects=objects, navigation_cells=navigation_cells,
-            speed=speed, clearance=2*robot_radius/grid_size):
-            stats["dag_lookahead"] = dict(enabled=True, status="skipped_no_successor_risk",
-                                          wall_time_s=0.)
-            return candidates
-        remaining = (math.inf if search_deadline is None
-                     else search_deadline-time.perf_counter())
-        budget = min(5., max(0., remaining * .5))
-        return refine_candidates(candidates, stable_key=_candidate_stable_key,
-            select=lambda pool: _select_resolution_candidate(pool, "dag_aware"),
-            stats=stats, budget_s=budget,
+    def refine(candidates, stats, deadline, baseline_finishes, baseline_distance):
+        return refine_dynamic_release_events(
+            candidates, robots=robots, tasks=tasks, task_status=task_status,
+            objects=objects, navigation_cells=navigation_cells,
+            robot_radius=robot_radius, grid_size=grid_size, speed=speed,
+            participants=participants, stats=stats, search_deadline=deadline,
             baseline_finishes=baseline_finishes, baseline_distance=baseline_distance,
-            evaluator=lambda candidate, deadline: replay_candidate(candidate,
-                robots=robots, tasks=tasks, task_status=task_status, objects=objects,
-                navigation_cells=navigation_cells, robot_radius=robot_radius,
-                grid_size=grid_size, speed=speed, participants=participants,
-                deadline=deadline))
+            horizon=horizon, budget_s=5.,
+            hypothesis_workers=hypothesis_workers)
     return refine
 
 
@@ -470,9 +427,9 @@ class StandaloneSimulation:
                  selection_policy="dag_aware", async_planning=True,
                  initial_world=None, assignment_result=None,
                  use_dag_priority=True, incremental_dag_evaluation=True,
-                 use_dag_lookahead=False, use_anticipated_delays=False,
+                 use_anticipated_delays=False,
                  anticipated_delay_horizon=5., preserve_priority_corridor=True,
-                 use_release_prediction=True, release_prediction_model="events",
+                 use_release_prediction=True, release_prediction_model="dynamic_events_guarded",
                  planner_workers=None, hypothesis_workers=1):
         if not isinstance(hypothesis_workers, int) or hypothesis_workers < 1:
             raise ValueError("hypothesis_workers must be a positive integer")
@@ -484,18 +441,15 @@ class StandaloneSimulation:
         self.selection_policy = selection_policy
         self.use_dag_priority = bool(use_dag_priority)
         self.incremental_dag_evaluation = bool(incremental_dag_evaluation)
-        self.use_dag_lookahead = bool(use_dag_lookahead)
         self.use_anticipated_delays = bool(use_anticipated_delays)
         self.preserve_priority_corridor = bool(preserve_priority_corridor)
         self.use_release_prediction = bool(use_release_prediction)
-        if release_prediction_model not in {"events", "replay", "dynamic_events", "dynamic_events_v1", "dynamic_events_guarded", "dynamic_events_verified"}:
+        if release_prediction_model != "dynamic_events_guarded":
             raise ValueError("Unknown release_prediction_model")
         if release_prediction_model.startswith("dynamic_events") and not 3 <= anticipated_delay_horizon <= 5:
             raise ValueError("Dynamic release horizon must be between 3 and 5 seconds")
         self.release_prediction_model = release_prediction_model
         self.anticipated_delay_horizon = float(anticipated_delay_horizon)
-        if use_dag_lookahead and use_anticipated_delays:
-            raise ValueError("Choose anticipated task delays OR executor replay, not both")
         if not 0 < self.anticipated_delay_horizon <= 5:
             raise ValueError("Anticipated reservation horizon must be in (0, 5] seconds")
         self.world = deepcopy(initial_world) if initial_world is not None else load_world(world_file)
@@ -685,9 +639,7 @@ class StandaloneSimulation:
         self.paused = False
         self.active_resolutions = {}
         self._service_choice_cache = {}
-        self._dag_lookahead_disabled = False
         self._release_prediction_disabled = False
-        self._executor_verification_disabled = False
         self.service_decision_history = []
         self.resolution_history = []
         self.conflict_events = []
@@ -1143,17 +1095,16 @@ class StandaloneSimulation:
             incremental_dag_evaluation=getattr(
                 self, "incremental_dag_evaluation", True
             ),
-            use_dag_lookahead=(getattr(self, "use_dag_lookahead", False)
-                               and not getattr(self, "_dag_lookahead_disabled", False)),
+
             use_anticipated_delays=getattr(self, "use_anticipated_delays", False),
             anticipated_delay_horizon=getattr(self, "anticipated_delay_horizon", 5.),
             preserve_priority_corridor=getattr(self, "preserve_priority_corridor", True),
             use_release_prediction=(getattr(self, "use_release_prediction", True)
                                     and not getattr(self,"_release_prediction_disabled",False)),
-            release_prediction_model=getattr(self, "release_prediction_model", "events"),
+            release_prediction_model=getattr(self, "release_prediction_model", "dynamic_events_guarded"),
             hypothesis_workers=getattr(self, "hypothesis_workers", 1),
             negotiation_state=deepcopy(getattr(self, "negotiation_state", None)),
-            verify_release=not getattr(self, "_executor_verification_disabled", False),
+
             parallel_reserved_paths={
                 (rid, index): route for rid, routes in external_paths.items()
                 for index, route in enumerate(routes)
@@ -1417,24 +1368,17 @@ class StandaloneSimulation:
                 else None),
             preserve_priority_corridor=getattr(self,"preserve_priority_corridor",True),
             dag_candidate_refiner=(
-                _make_dag_refiner(self.robots, self.tasks, self.task_status,
-                    self.objects, self.world.navigation_cells,
-                    self.world.robot_radius, self.world.grid_size,
-                    self.steps_per_second, set(key))
-                if self.selection_policy == "dag_aware"
-                and getattr(self, "use_dag_lookahead", False)
-                and not getattr(self, "_dag_lookahead_disabled", False) else
                 _make_release_refiner(self.robots,self.tasks,self.task_status,
                     self.objects,self.world.navigation_cells,self.world.robot_radius,self.world.grid_size,
-                    self.steps_per_second,set(key),getattr(self,"release_prediction_model","events"),
+                    self.steps_per_second,set(key),getattr(self,"release_prediction_model","dynamic_events_guarded"),
                     getattr(self,"anticipated_delay_horizon",5.),
-                    verification_enabled=not getattr(self,"_executor_verification_disabled",False),
+
                     hypothesis_workers=getattr(self,"hypothesis_workers",1)) if self.selection_policy=="dag_aware"
                     and getattr(self,"use_release_prediction",True)
                     and not getattr(self,"_release_prediction_disabled",False)
                     and getattr(self,"preserve_priority_corridor",True)
                     and not getattr(self,"use_anticipated_delays",False)
-                    and not getattr(self,"use_dag_lookahead",False) else None
+                    else None
             ),
             use_dag_priority=getattr(self, "use_dag_priority", True),
             incremental_dag_evaluation=getattr(
@@ -1594,17 +1538,16 @@ class StandaloneSimulation:
                 incremental_dag_evaluation=getattr(
                     self, "incremental_dag_evaluation", True
                 ),
-                use_dag_lookahead=(getattr(self, "use_dag_lookahead", False)
-                                   and not getattr(self, "_dag_lookahead_disabled", False)),
+
                 use_anticipated_delays=getattr(self, "use_anticipated_delays", False),
                 anticipated_delay_horizon=getattr(self, "anticipated_delay_horizon", 5.),
                 preserve_priority_corridor=getattr(self, "preserve_priority_corridor", True),
                 use_release_prediction=(getattr(self, "use_release_prediction", True)
                                         and not getattr(self,"_release_prediction_disabled",False)),
-                release_prediction_model=getattr(self, "release_prediction_model", "events"),
+                release_prediction_model=getattr(self, "release_prediction_model", "dynamic_events_guarded"),
                 hypothesis_workers=getattr(self, "hypothesis_workers", 1),
                 negotiation_state=getattr(self, "negotiation_state", None),
-                verify_release=not getattr(self, "_executor_verification_disabled", False),
+
             )
         except (RuntimeError, TimeoutError) as error:
             error.stats = {**diagnostics, **getattr(error, "stats", {}),
@@ -1625,19 +1568,10 @@ class StandaloneSimulation:
         ))
 
     def _record_conflict(self, plan, participants):
-        if plan.get("search_stats", {}).get("executor_verification", {}).get("status") == "fallback":
-            # Do not repeatedly spend a bounded replay budget on a snapshot
-            # family requiring unsupported recourse. Keep guarded DAG scoring.
-            self._executor_verification_disabled = True
         if self.selection_policy == "negotiation_adapted":
             negotiation.commit(self.negotiation_state, plan["search_stats"]["negotiation"])
         if plan.get("search_stats",{}).get("release_prediction",{}).get("status")=="fallback":
             self._release_prediction_disabled=True
-        # One incomplete batch is enough to disable expensive refinement for
-        # the remainder of this mission. Geometry/safety and original scoring
-        # remain available; no repeated spending on unsupported snapshots.
-        if plan.get("search_stats", {}).get("dag_lookahead", {}).get("status") == "fallback":
-            self._dag_lookahead_disabled = True
         self.conflict_events.append(dict(
             conflict_id=len(self.conflict_events) + 1,
             simulation_time_s=getattr(self, "simulation_time_s", 0.0),
@@ -2834,7 +2768,7 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
 
 
 def run_standalone_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
-                              planner_workers=None, release_prediction_model="events",
+                              planner_workers=None, release_prediction_model="dynamic_events_guarded",
                               hypothesis_workers=1):
     StandaloneSimulation(world_file, speed=speed, selection_policy=selection_policy,
                          planner_workers=planner_workers,
