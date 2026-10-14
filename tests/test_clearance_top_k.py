@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from core.yielding import select_clearance_top_k,select_goal_directed_top_k,clearance_yield_key,_select_clearance_ranked
-from simulations.standalone.relocation_search import _nearest_feasible_relocations,_path_conflict
+from core.coordination.relocation_search import _nearest_feasible_relocations,_path_conflict
 
 
 def candidate(direction,time,margin=.2,goal_cost=0.):

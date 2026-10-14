@@ -3,7 +3,7 @@ import threading
 import time
 
 
-from simulations.ai2thor.replanning.minimum_disruption import (
+from core.coordination.interaction_search import (
     PlanningTimeoutError,
     build_priority_hypotheses,
     select_minimum_disruption_plan,
@@ -15,8 +15,8 @@ from simulations.ai2thor.replanning.spatial_conflict import (
     candidate_paths_are_safe,
     certify_concurrent_resume,
 )
-from simulations.ai2thor.replanning.minimum_disruption import _local_metrics
-from simulations.ai2thor.replanning.dag_makespan import estimate_remaining_dag_makespan
+from core.coordination.interaction_search import _local_metrics
+from core.coordination.task_timing import estimate_remaining_dag_makespan
 
 
 def point(x, z=0.0):

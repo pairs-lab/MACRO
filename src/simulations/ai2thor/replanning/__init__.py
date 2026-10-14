@@ -1,10 +1,10 @@
 """AI2-THOR online local replanning API."""
 
-from .dag_makespan import (
+from core.coordination.task_timing import (
     DagScheduleEstimate,
     estimate_remaining_dag_makespan,
 )
-from .minimum_disruption import (
+from core.coordination.interaction_search import (
     PlanningTimeoutError,
     build_priority_hypothesis,
     build_priority_hypotheses,

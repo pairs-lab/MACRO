@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from simulations.ai2thor.config import ONLINE_REPLANNING_ROBOT_SPEED
+DEFAULT_ROBOT_SPEED = 1.0
 
 
 TaskId = int | str
@@ -171,7 +171,7 @@ def estimate_remaining_dag_makespan(
     candidate: Mapping[str, Any],
     *,
     contexts: Mapping[int, Mapping[str, Any]] | None = None,
-    robot_speed=ONLINE_REPLANNING_ROBOT_SPEED,
+    robot_speed=DEFAULT_ROBOT_SPEED,
     task_duration_estimator: Callable[[Mapping[str, Any], str], float]
     | None = None,
     task_route_estimator: Callable[

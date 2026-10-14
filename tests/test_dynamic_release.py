@@ -4,12 +4,12 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from unittest.mock import patch
 
-from simulations.standalone.app import RobotState, _compute_conflict_plan, _make_release_refiner
-from simulations.standalone.anticipated_delay import (
+from simulations.grid.app import RobotState, _compute_conflict_plan, _make_release_refiner
+from core.coordination.anticipated_delay import (
     Segment, ReservationTable, project_trajectories, estimate_future_delays,
 )
-from simulations.standalone.dynamic_release import refine_dynamic_release_events, stationary_service_chain
-from simulations.standalone.relocation_search import _remaining_dag_cost
+from core.coordination.dynamic_release import refine_dynamic_release_events, stationary_service_chain
+from core.coordination.relocation_search import _remaining_dag_cost
 import test_runtime_policies as fixtures
 
 
@@ -49,7 +49,7 @@ class DynamicReleaseTests(unittest.TestCase):
         self.assertGreater(evaluation['task_travel_times'][3], 0.)
 
     def test_current_model_uses_guarded_release_and_five_second_budget(self):
-        with patch('simulations.standalone.dynamic_release.refine_dynamic_release_events') as refine:
+        with patch('core.coordination.dynamic_release.refine_dynamic_release_events') as refine:
             for model, guarded in [('dynamic_events_guarded', True)]:
                 callback = _make_release_refiner([], [], {}, {}, frozenset(), .1, 1., 1., set(), model)
                 callback([], {}, None, {}, 0.)
@@ -84,7 +84,7 @@ class DynamicReleaseTests(unittest.TestCase):
                     moved_agents=['R1'] if steps else [])
                 pool = [candidate, dict(deepcopy(candidate), candidate_id='b')]
                 stats = {}
-                with patch('simulations.standalone.dynamic_release.estimate_future_delays',
+                with patch('core.coordination.dynamic_release.estimate_future_delays',
                            return_value=({}, {'censored': False})):
                     refine_dynamic_release_events(pool, robots=robots, tasks=tasks,
                         task_status=common['task_status'], objects=common['objects'],
@@ -118,7 +118,7 @@ class DynamicReleaseTests(unittest.TestCase):
                              'R2': [(1, 1), (1, 0), (0, 0)]})
         pool = [candidate, dict(deepcopy(candidate), candidate_id='b')]
         stats = {}
-        with patch('simulations.standalone.dynamic_release.estimate_future_delays',
+        with patch('core.coordination.dynamic_release.estimate_future_delays',
                    return_value=({}, {'censored': False})):
             refine_dynamic_release_events(pool, robots=robots, tasks=tasks,
                 task_status=common['task_status'], objects=common['objects'],
@@ -205,7 +205,7 @@ class DynamicReleaseTests(unittest.TestCase):
         pool = [candidate, dict(deepcopy(candidate), candidate_id='b')]
         before = deepcopy(pool)
         stats = {}
-        with patch('simulations.standalone.dynamic_release.estimate_future_delays',
+        with patch('core.coordination.dynamic_release.estimate_future_delays',
                    side_effect=[({}, {'censored': False}), TimeoutError()]):
             refine_dynamic_release_events(pool, robots=robots, tasks=tasks, task_status=common['task_status'],
                 objects=common['objects'], navigation_cells=common['navigation_cells'], robot_radius=.1,
@@ -215,7 +215,7 @@ class DynamicReleaseTests(unittest.TestCase):
         self.assertEqual(stats['release_prediction']['status'], 'fallback')
 
     def test_local_policies_never_construct_dynamic_refiner(self):
-        with patch('simulations.standalone.app._make_release_refiner', side_effect=AssertionError('DAG leakage')):
+        with patch('core.coordination.coordinator._make_release_refiner', side_effect=AssertionError('DAG leakage')):
             for policy in ('local_distance', 'local_delay', 'reroute_only'):
                 for model in ('dynamic_events_guarded',):
                     with redirect_stdout(io.StringIO()):

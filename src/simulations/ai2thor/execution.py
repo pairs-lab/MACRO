@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from core import order_dag_priorities
-from .replanning.dag_makespan import estimate_remaining_dag_makespan
+from core.coordination.task_timing import estimate_remaining_dag_makespan
 from simulations.ai2thor.config import TASK_ACTION_DURATIONS
 
 

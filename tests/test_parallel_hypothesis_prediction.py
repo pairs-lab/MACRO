@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from simulations.standalone.dynamic_release import (
+from core.coordination.dynamic_release import (
     refine_dynamic_release_events, close_hypothesis_pools)
 from test_dynamic_release import departure_fixture
 
@@ -46,7 +46,7 @@ class ParallelHypothesisTests(unittest.TestCase):
                 future.set_result((changed, dict(status='fallback')))
                 return future
         stats = {}
-        with patch('simulations.standalone.dynamic_release._POOLS',
+        with patch('core.coordination.dynamic_release._POOLS',
                    {(os.getpid(), 2): IncompletePool()}):
             refine_dynamic_release_events(pool, stats=stats, hypothesis_workers=2, **kwargs)
         self.assertEqual(pool, before)

@@ -3,8 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from tests.test_runtime_policies import fixture
-from simulations.standalone.app import _compute_conflict_plan
-from simulations.standalone import relocation_search as search
+from simulations.grid.app import _compute_conflict_plan
+from core.coordination import relocation_search as search
 
 
 class DownstreamPriorityTests(unittest.TestCase):

@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
-from simulations.standalone import relocation_search as search
-from simulations.standalone.anticipated_delay import Segment, ReservationTable, estimate_future_delays
-from simulations.standalone.app import _compute_conflict_plan
+from core.coordination import relocation_search as search
+from core.coordination.anticipated_delay import Segment, ReservationTable, estimate_future_delays
+from simulations.grid.app import _compute_conflict_plan
 import test_runtime_policies as policy_tests
 
 
@@ -115,7 +115,7 @@ class ReservationTests(unittest.TestCase):
         move=Segment("R2",2,0,1,(0,0),(1,0),0)
         blockers=[Segment("R1",1,0,2,(.5,0),(.5,0),0),
                   Segment("R3",3,0,3,(.5,0),(.5,0),0)]
-        with patch("simulations.standalone.anticipated_delay.project_trajectories",return_value=[move,*blockers]):
+        with patch("core.coordination.anticipated_delay.project_trajectories",return_value=[move,*blockers]):
             delays,diag=estimate_future_delays(candidate={},evaluation={},robots=robots,tasks=[],
                 speed=1.,grid_size=1.,robot_radius=.2,horizon=5.)
         self.assertEqual(delays,{2:3.})

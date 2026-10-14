@@ -6,8 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from simulations.standalone.dynamic_collision import swept_separation, swept_robot_corridor, _disk_offsets
-from simulations.standalone.anticipated_delay import Segment, ReservationTable
+from core.coordination.dynamic_collision import swept_separation, swept_robot_corridor, _disk_offsets
+from core.coordination.anticipated_delay import Segment, ReservationTable
 
 
 class GeometryPrimitiveEquivalenceTests(unittest.TestCase):

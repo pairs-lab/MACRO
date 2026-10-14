@@ -10,8 +10,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
-from simulations.standalone.app import RobotState, StandaloneSimulation, _compute_conflict_plan, _local_resolution_time
-from simulations.standalone import relocation_search as search
+from simulations.grid.app import RobotState, GridSimulation, _compute_conflict_plan, _local_resolution_time
+from core.coordination import relocation_search as search
 from core.dag_priority import order_dag_priorities
 
 
@@ -76,7 +76,7 @@ class PoliciesTest(unittest.TestCase):
         self.assertEqual(pools[1], pools[2])
 
     def test_completed_yield_reservation_has_no_live_parking_step(self):
-        sim = StandaloneSimulation.__new__(StandaloneSimulation)
+        sim = GridSimulation.__new__(GridSimulation)
         sim.active_resolutions = {
             4: {
                 "kind": "yield_wait",
@@ -93,7 +93,7 @@ class PoliciesTest(unittest.TestCase):
         self.assertEqual(sim._parking_resolution_ids("R2"), [5])
 
     def test_cancelled_idle_parking_arrival_recovers_without_crashing(self):
-        sim = StandaloneSimulation.__new__(StandaloneSimulation)
+        sim = GridSimulation.__new__(GridSimulation)
         robot = RobotState(
             "R1",
             (3, 4),
@@ -118,7 +118,7 @@ class PoliciesTest(unittest.TestCase):
     def test_new_contact_reoptimizes_completed_yield_reservation(self):
         """A parked yielder must not suppress a later horizon forever."""
         data = fixture()
-        sim = StandaloneSimulation.__new__(StandaloneSimulation)
+        sim = GridSimulation.__new__(GridSimulation)
         sim.robots = data["dag_robots"]
         sim.pending_conflict_plans = {}
         sim.active_resolutions = {
@@ -155,7 +155,7 @@ class PoliciesTest(unittest.TestCase):
         if not source.exists():
             self.skipTest("Optional shared-corridor regression scene absent")
         with redirect_stdout(io.StringIO()):
-            sim = StandaloneSimulation(
+            sim = GridSimulation(
                 source,
                 speed=8,
                 selection_policy="dag_aware",
@@ -185,7 +185,7 @@ class PoliciesTest(unittest.TestCase):
         pools = []
         for policy in ("dag_aware", "local_distance", "local_delay"):
             data = fixture()
-            sim = StandaloneSimulation.__new__(StandaloneSimulation)
+            sim = GridSimulation.__new__(GridSimulation)
             sim.selection_policy = policy
             sim.robots = data["dag_robots"]
             sim.robots[1].phase = "acting"
@@ -259,7 +259,7 @@ class PoliciesTest(unittest.TestCase):
 
     def test_reroute_only_never_uses_relocation_or_dag(self):
         with patch.object(search, "_remaining_dag_cost", side_effect=AssertionError("DAG leak")), \
-             patch("simulations.standalone.app.search_relocation_plan", side_effect=AssertionError("relocation leak")):
+             patch("core.coordination.coordinator.search_relocation_plan", side_effect=AssertionError("relocation leak")):
             plan = _compute_conflict_plan(**fixture(), selection_policy="reroute_only")
         self.assertEqual(plan["strategy"], "short_replan")
         self.assertEqual(plan["relocations"], [])
@@ -268,7 +268,7 @@ class PoliciesTest(unittest.TestCase):
     def test_reroute_execution_does_not_hold_other_robots(self):
         data = fixture()
         plan = _compute_conflict_plan(**data, selection_policy="reroute_only")
-        sim = StandaloneSimulation.__new__(StandaloneSimulation)
+        sim = GridSimulation.__new__(GridSimulation)
         sim.selection_policy = "reroute_only"
         sim.robots = data["dag_robots"]
         sim.pending_conflict_plans = {}
@@ -280,8 +280,8 @@ class PoliciesTest(unittest.TestCase):
         self.assertTrue(all(r.phase == "moving" for r in sim.robots))
 
     def test_reroute_only_explicit_failure(self):
-        with patch("simulations.standalone.app._astar_around_robot_bodies", return_value=None), \
-             patch("simulations.standalone.app.search_relocation_plan", side_effect=AssertionError("fallback")):
+        with patch("core.coordination.coordinator._astar_around_robot_bodies", return_value=None), \
+             patch("core.coordination.coordinator.search_relocation_plan", side_effect=AssertionError("fallback")):
             with self.assertRaisesRegex(RuntimeError, "baseline_no_feasible_intervention"):
                 _compute_conflict_plan(**fixture(), selection_policy="reroute_only")
 

@@ -1,6 +1,6 @@
 # MARCO: DAG-Aware Multi-Robot Coordination
 
-A grid-based multi-robot simulator with task-DAG assignment and online conflict resolution. A separate AI2-THOR adapter supports interactive scene execution.
+Shared task-DAG assignment and online coordination algorithms with separate Grid 2D, AI2-THOR, and ROS 2 / Gazebo adapters.
 
 ## Install
 
@@ -51,13 +51,25 @@ python run_ai2thor.py --help
 
 This adapter uses simulator-specific navigation and execution; it is separate from the grid simulator. Optional language-model features require a locally configured API key. Never commit credentials.
 
+## ROS 2 / Gazebo (optional)
+
+The current three-robot scenario uses Nav2, AMCL and a shared RViz window. It requires ROS 2 Humble, Gazebo Classic and an external robot-model package. See [ROS setup and launch](src/simulations/ros2/README.md) before running:
+
+```bash
+bash run_ros2.sh
+```
+
+This is a simulation adapter, not a validated physical-robot deployment. Its controller-aware navigation timing model is separate from the grid task-DAG timing model.
+
 ## Project layout
 
 | Directory | Contents |
 | --- | --- |
-| `src/core/` | Assignment, DAG scheduling and coordination primitives. |
-| `src/simulations/standalone/` | Grid navigation, conflict repair and execution. |
+| `src/core/` | Shared assignment solvers and robot state schema. |
+| `src/core/coordination/` | Geometry, search, prediction and DAG timing; no simulator imports. |
+| `src/simulations/grid/` | Grid world loading, execution and display. |
 | `src/simulations/ai2thor/` | AI2-THOR adapter. |
+| `src/simulations/ros2/` | ROS / Nav2 execution adapter and current three-robot scenario. |
 | `tools/maps/` | Map creation, editing and export utilities. |
 | `maps/`, `maps_ai2thor/` | Example maps and mission configurations. |
 | `native/` | Optional C++ acceleration modules. |
@@ -71,6 +83,8 @@ python -m pytest -q
 ```
 
 Optional native dependencies must be built to exercise their tests. Generated outputs, local datasets and credentials are excluded by `.gitignore`.
+
+The adapters retain their environment-specific execution semantics. Sharing the core does not imply identical controllers or prediction models across the three environments.
 
 ## Source-only export
 

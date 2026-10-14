@@ -17,7 +17,7 @@ from core.assignment import evaluate_plan, optimize_task_assignments
 from core.assignment_cpp import optimize_chain_bnb_cpp, optimize_atomic_bnb_cpp, prepare_native_problem, require_native
 from tests.test_assignment_optimization import fixture, task
 from tests.assignment_fixtures import EndpointOracle
-from simulations.standalone.app import GridDistanceOracle
+from simulations.grid.app import GridDistanceOracle
 
 try:
     import _chain_bnb_native

@@ -6,12 +6,12 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from simulations.standalone import planner
-from simulations.standalone.app import _compute_conflict_plan, RobotState
-from simulations.standalone.release_events import (
+from core.coordination import planner
+from simulations.grid.app import _compute_conflict_plan, RobotState
+from core.coordination.release_events import (
     predict_release_events, continuation_motion_is_clear,
 )
-from simulations.standalone.relocation_search import _remaining_dag_cost
+from core.coordination.relocation_search import _remaining_dag_cost
 import test_runtime_policies as fixtures
 
 

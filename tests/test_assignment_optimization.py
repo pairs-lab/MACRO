@@ -13,8 +13,8 @@ from core.assignment import (
     _prepare_exact_prefix_bound, _coalesce_owner_chains,
     optimize_task_assignments, evaluate_plan,
 )
-from simulations.standalone.app import GridDistanceOracle
-from simulations.standalone.world import World
+from simulations.grid.app import GridDistanceOracle
+from simulations.grid.world import World
 
 
 def fixture(tasks):

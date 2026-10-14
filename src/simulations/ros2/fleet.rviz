@@ -1,0 +1,165 @@
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Class: rviz_default_plugins/Map
+    Enabled: true
+    Name: Shared scanned map
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb1/map
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: Fleet bounds and conflict zone
+    Topic:
+      Durability Policy: Transient Local
+      Value: /fleet/markers
+  - Class: rviz_default_plugins/RobotModel
+    Description Source: Topic
+    Description Topic:
+      Value: /fleet/tb1/robot_description
+    Enabled: true
+    Name: tb1 robot
+  - Class: nav2_rviz_plugins/ParticleCloud
+    Enabled: true
+    Name: tb1 AMCL particles
+    Topic:
+      Reliability Policy: Best Effort
+      Value: /tb1/particle_cloud
+  - Class: rviz_default_plugins/PoseWithCovariance
+    Enabled: true
+    Name: tb1 AMCL covariance
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb1/amcl_pose
+  - Class: rviz_default_plugins/LaserScan
+    Enabled: true
+    Name: tb1 lidar
+    Size (m): 0.015
+    Topic:
+      Reliability Policy: Best Effort
+      Value: /fleet/tb1/scan
+  - Alpha: 0.45
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Enabled: true
+    Name: tb1 local inflation costmap
+    Topic:
+      Durability Policy: Transient Local
+      Value: /fleet/tb1/local_costmap/costmap
+    Update Topic:
+      Value: /fleet/tb1/local_costmap/costmap_updates
+  - Alpha: 0.35
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Enabled: false
+    Name: tb1 global inflation costmap
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb1/global_costmap/costmap
+  - Class: rviz_default_plugins/Path
+    Color: 0; 140; 255
+    Enabled: true
+    Line Width: 0.025
+    Name: tb1 Nav2 plan
+    Topic:
+      Durability Policy: Volatile
+      Value: /tb1/plan
+  - Class: rviz_default_plugins/Path
+    Color: 255; 30; 80
+    Enabled: true
+    Line Width: 0.025
+    Name: tb1 clearance
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb1/marco_clearance
+  - Class: rviz_default_plugins/Path
+    Color: 0; 200; 80
+    Enabled: true
+    Line Width: 0.025
+    Name: tb1 resumption
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb1/marco_resume
+  - Class: rviz_default_plugins/RobotModel
+    Description Source: Topic
+    Description Topic:
+      Value: /fleet/tb2/robot_description
+    Enabled: true
+    Name: tb2 robot
+  - Class: nav2_rviz_plugins/ParticleCloud
+    Enabled: true
+    Name: tb2 AMCL particles
+    Topic:
+      Reliability Policy: Best Effort
+      Value: /tb2/particle_cloud
+  - Class: rviz_default_plugins/PoseWithCovariance
+    Enabled: true
+    Name: tb2 AMCL covariance
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb2/amcl_pose
+  - Class: rviz_default_plugins/LaserScan
+    Enabled: true
+    Name: tb2 lidar
+    Size (m): 0.015
+    Topic:
+      Reliability Policy: Best Effort
+      Value: /fleet/tb2/scan
+  - Alpha: 0.45
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Enabled: true
+    Name: tb2 local inflation costmap
+    Topic:
+      Durability Policy: Transient Local
+      Value: /fleet/tb2/local_costmap/costmap
+    Update Topic:
+      Value: /fleet/tb2/local_costmap/costmap_updates
+  - Alpha: 0.35
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Enabled: false
+    Name: tb2 global inflation costmap
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb2/global_costmap/costmap
+  - Class: rviz_default_plugins/Path
+    Color: 255; 140; 0
+    Enabled: true
+    Line Width: 0.025
+    Name: tb2 Nav2 plan
+    Topic:
+      Durability Policy: Volatile
+      Value: /tb2/plan
+  - Class: rviz_default_plugins/Path
+    Color: 255; 30; 80
+    Enabled: true
+    Line Width: 0.025
+    Name: tb2 clearance
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb2/marco_clearance
+  - Class: rviz_default_plugins/Path
+    Color: 0; 200; 80
+    Enabled: true
+    Line Width: 0.025
+    Name: tb2 resumption
+    Topic:
+      Durability Policy: Transient Local
+      Value: /tb2/marco_resume
+  Global Options:
+    Fixed Frame: map
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 130.0
+      X: 0.0
+      Y: -0.6
+Window Geometry:
+  Height: 850
+  Width: 1250

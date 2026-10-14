@@ -8,7 +8,6 @@ from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 from contextlib import redirect_stdout
 import io
-from dataclasses import dataclass, field
 from multiprocessing import get_context
 from types import SimpleNamespace
 
@@ -17,35 +16,43 @@ import numpy as np
 
 from core import optimize_task_assignments
 
-from .dynamic_collision import (
+from core.coordination.dynamic_collision import (
     check_dynamic_robot_collisions,
     swept_robot_corridor,
     swept_separation,
 )
-from . import negotiation
-from .planner import (
-    _astar_around_robot_bodies,
+from core.coordination import negotiation
+from core.coordination.planner import (
     dynamic_replan_candidates,
-    _interaction_goals,
     path_length,
     preferred_path_to_object,
     select_dynamic_replan_path,
-    with_geometry_cache,
 )
-from .relocation_search import (
-    _candidate_diagnostic,
+from core.coordination.relocation_search import (
     _path_conflict,
     _route_exits_without_reentry,
-    _timed_path_conflict,
     evaluate_reroute_plan,
     search_relocation_plan,
 )
 from .world import load_world
-from .release_events import (
+from core.coordination.release_events import (
     continuation_motion_is_clear, priority_motion_is_clear, distance_prefix,
     choose_continuation_route, wait_for_nominal_is_better,
 )
 
+
+from core.models import RobotState
+from core.coordination.coordinator import (
+    compute_conflict_plan, _make_release_refiner, _snapshot_remaining_path,
+    _all_robot_protected_paths, _route_clears_protected_corridors,
+)
+from .navigation import GridDistanceOracle
+from .renderer import GridRenderer
+
+
+def _compute_conflict_plan(**kwargs):
+    """Bind grid execution timing to the shared snapshot-only coordinator."""
+    return compute_conflict_plan(local_resolution_time_evaluator=_local_resolution_time, **kwargs)
 
 RUNTIME_ALGORITHM_REVISION = "bounded-release-events-v6-dag-recourse"
 
@@ -55,374 +62,7 @@ _DEFAULT_COLORS = ((50, 80, 240), (235, 140, 30), (60, 190, 70))
 PATH_PREVIEW_SECONDS = 0.0
 
 
-def _snapshot_remaining_path(robot):
-    """Return the untraversed centre path from an immutable robot snapshot."""
-    if not robot.path:
-        return [robot.cell]
-    route = list(robot.path[robot.path_index:])
-    if not route:
-        return [robot.cell]
-    if route[0] != robot.cell:
-        route.insert(0, robot.cell)
-    return route
-
-
-def _all_robot_protected_paths(robots, excluded_ids=()):
-    """Protect every robot's full remaining path, or its stationary body."""
-    excluded = set(excluded_ids)
-    return {
-        robot.robot_id: _snapshot_remaining_path(robot)
-        for robot in robots
-        if robot.robot_id not in excluded
-    }
-
-
-def _route_clears_protected_corridors(
-    route,
-    protected_paths,
-    robot_radius,
-    grid_size,
-):
-    """Require a route to leave every footprint-wide corridor without reentry."""
-    forbidden = set()
-    for protected in protected_paths.values():
-        forbidden.update(
-            swept_robot_corridor(
-                protected,
-                robot_radius,
-                robot_radius,
-                grid_size,
-            )
-        )
-    return _route_exits_without_reentry(route, forbidden)
-
-
-class GridDistanceOracle:
-    """Expose standalone A* through the shared core distance interface."""
-
-    def __init__(self, world):
-        self.world = world
-        self.starts = {
-            robot["id"]: robot["start_cell"] for robot in world.robots
-        }
-        self._cache = {}
-        self.predicted_objects = deepcopy(world.objects)
-
-    def begin_prediction(self):
-        self.predicted_objects = deepcopy(self.world.objects)
-
-    def finish_predicted_task(self, task):
-        if task["action"] == "place":
-            moved = self.predicted_objects[task["object"]]
-            target = self.predicted_objects[task["target"]]
-            moved["cell"] = target["cell"]
-            moved["cells"] = frozenset({target["cell"]})
-
-    def _interaction_positions(self, item):
-        """Return exactly the reachable poses accepted by object planning."""
-        explicit = item.get("interaction_cells")
-        if explicit is not None:
-            return set(explicit) & set(self.world.navigation_cells)
-        cells = item.get("cells")
-        if not cells:
-            return set()
-        return _interaction_goals(self.world.navigation_cells, cells)
-
-    def optimistic_geometry(self, ordered_tasks):
-        """Expose point sets used by optimistic Euclidean assignment bounds."""
-        predicted = deepcopy(self.world.objects)
-        task_positions = {}
-        for task in ordered_tasks:
-            location = (
-                task.get("target")
-                if task["action"] == "place"
-                else task["object"]
-            )
-            item = predicted.get(location)
-            if item is not None:
-                points = self._interaction_positions(item)
-                if points:
-                    task_positions[task["id"]] = tuple(sorted(points))
-            if task["action"] == "place" and task.get("target") in predicted:
-                target = predicted[task["target"]]
-                moved = predicted.get(task["object"])
-                if moved is not None:
-                    moved["cell"] = target.get("cell")
-                    moved["cells"] = frozenset({target["cell"]})
-        return {
-            "initial_positions": {
-                robot: (tuple(cell),) for robot, cell in self.starts.items()
-            },
-            "task_positions": task_positions,
-            "distance_scale": self.world.grid_size,
-        }
-
-    @staticmethod
-    def _robot_id(simulation_name):
-        if simulation_name.startswith("robot"):
-            return f"R{simulation_name[5:]}"
-        return simulation_name
-
-    def plan(self, robot, location, start_position=None):
-        robot_id = self._robot_id(robot)
-        start = (
-            self.starts[robot_id]
-            if start_position is None
-            else start_position
-        )
-        destination = self.predicted_objects[location]
-        return self._plan_destination(robot_id, location, start, destination)
-
-    def _plan_destination(self, robot_id, location, start, destination):
-        cache_key = (robot_id, location, start, tuple(sorted(destination["cells"])),
-                     tuple(sorted(destination.get("interaction_cells", ()))))
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-        route = preferred_path_to_object(
-            self.world.navigation_cells,
-            start,
-            destination["cells"],
-            interaction_cells=destination.get("interaction_cells"),
-            robot_speed=8.0,
-            candidate_count=3,
-        )
-        if route is None:
-            raise RuntimeError(f"No assignment route for {robot_id} to {location}")
-        result = path_length(route, self.world.grid_size), route[-1]
-        self._cache[cache_key] = result
-        return result
-
-    def prepare_assignment_routes(self, ordered_tasks):
-        """Freeze task-specific predictions once for repeated leaf evaluation."""
-        self.begin_prediction()
-        destinations = {}
-        for task in ordered_tasks:
-            location = task.get("target") if task["action"] == "place" else task["object"]
-            destinations[task["id"]] = (location, dict(self.predicted_objects[location]))
-            self.finish_predicted_task(task)
-
-        def route(task_id, robot_id, start):
-            location, destination = destinations[task_id]
-            return self._plan_destination(robot_id, location,
-                self.starts[robot_id] if start is None else start, destination)
-        return route
-
-
-@dataclass
-class RobotState:
-    robot_id: str
-    cell: tuple[int, int]
-    color: tuple[int, int, int]
-    goal: tuple[int, int] | None = None
-    path: list[tuple[int, int]] = field(default_factory=list)
-    path_index: int = 0
-    travelled: float = 0.0
-    phase: str = "idle"
-    current_task: dict | None = None
-    action_remaining: float = 0.0
-    interrupted_action_remaining: float | None = None
-    preview_remaining: float = 0.0
-    carrying: str | None = None
-    waiting_for: str | None = None
-    clearing_for: tuple[str, ...] = ()
-    clearing_started: bool = False
-    movement_credit: float = 0.0
-    movement_edge: tuple | None = None
-
-
-@with_geometry_cache
-def _compute_conflict_plan(
-    *,
-    cluster,
-    dag_robots,
-    tasks,
-    task_status,
-    objects,
-    navigation_cells,
-    robot_radius,
-    grid_size,
-    speed_cells_per_second,
-    selection_policy="dag_aware",
-    planning_timeout_s=None,
-    diagnostics=None,
-    use_dag_priority=True,
-    incremental_dag_evaluation=True,
-    use_anticipated_delays=False,
-    anticipated_delay_horizon=5.,
-    preserve_priority_corridor=True,
-    use_release_prediction=True,
-    release_prediction_model="dynamic_events_guarded",
-    hypothesis_workers=1,
-    negotiation_state=None,
-    parallel_reserved_paths=None,
-    execution_candidate_refiner=None,
-):
-    """Plan from immutable snapshots without touching live simulation state.
-
-    An execution adapter may replace the grid release evaluator with its own
-    candidate evaluator *before* selection. None preserves the grid method.
-    The adapter must return only executable, scored candidates and must fail
-    closed if its evaluation budget is exhausted.
-    """
-    if execution_candidate_refiner is not None and selection_policy != "dag_aware":
-        raise ValueError("An execution evaluator requires dag_aware selection")
-    workers = [
-        robot
-        for robot in cluster
-        if robot.current_task is not None
-        and robot.phase in {"preview", "moving", "waiting"}
-    ]
-    free_agents = [
-        robot
-        for robot in cluster
-        if robot.current_task is None and robot.phase == "idle"
-    ]
-    if not workers:
-        if selection_policy == "reroute_only":
-            raise RuntimeError("baseline_no_feasible_intervention")
-        return None
-
-    started = time.perf_counter()
-    additional_candidates = []
-    cluster_ids = {robot.robot_id for robot in cluster}
-    external_protected_paths = _all_robot_protected_paths(
-        dag_robots,
-        excluded_ids=cluster_ids,
-    )
-    external_protected_paths.update(parallel_reserved_paths or {})
-    # A direct dynamic reroute is a valid candidate for active-active as well
-    # as active-idle contacts.  Holding the other contact participants while
-    # one worker clears the component gives the evaluator and executor the
-    # same conservative release semantics.
-    for worker in workers:
-        blockers = [robot for robot in cluster if robot is not worker]
-        protected_paths = _all_robot_protected_paths(
-            dag_robots,
-            excluded_ids={worker.robot_id},
-        )
-        protected_paths.update(parallel_reserved_paths or {})
-        clearance_cells = 2.0 * robot_radius / grid_size
-        replanned = _astar_around_robot_bodies(
-            navigation_cells, worker.cell, worker.goal,
-            robot_centres=[cell for r in dag_robots if r.robot_id != worker.robot_id
-                           for cell in _snapshot_remaining_path(r)],
-            clearance_cells=clearance_cells,
-        ) if selection_policy == "reroute_only" else select_dynamic_replan_path(
-            navigation_cells,
-            worker.cell,
-            worker.goal,
-            stationary_robot_centres=(robot.cell for robot in blockers),
-            clearance_cells=clearance_cells,
-            robot_speed=speed_cells_per_second,
-            candidate_count=3,
-        )
-        if replanned is not None and _route_clears_protected_corridors(
-            replanned,
-            protected_paths,
-            robot_radius,
-            grid_size,
-        ):
-            additional_candidates.append(
-                evaluate_reroute_plan(
-                    worker_id=worker.robot_id,
-                    route=replanned,
-                    robots=dag_robots,
-                    tasks=tasks,
-                    task_status=task_status,
-                    objects=objects,
-                    navigation_cells=navigation_cells,
-                    grid_size=grid_size,
-                    speed_cells_per_second=speed_cells_per_second,
-                    held_robot_ids=[r.robot_id for r in blockers],
-                    robot_radius=robot_radius,
-                    evaluate_dag=False,
-                )
-            )
-
-    if selection_policy == "reroute_only":
-        if not additional_candidates:
-            raise RuntimeError("baseline_no_feasible_intervention")
-        additional_candidates.sort(key=lambda c: (
-            path_length(c["preferred_paths"][c["priority_robot"]], grid_size),
-            c["priority_robot"], tuple(c["preferred_paths"][c["priority_robot"]])))
-        selected = additional_candidates[0]
-        for index, candidate in enumerate(additional_candidates):
-            candidate["candidate_id"] = f"A{index:04d}"
-            candidate["local_resolution_delay"] = _local_resolution_time(
-                dict(candidate, strategy="service_reroute"), dag_robots,
-                cluster_ids, navigation_cells, robot_radius, grid_size,
-                speed_cells_per_second, objects)
-            candidate["local_time_model"] = "current_execution_snapshot"
-        selected["search_stats"] = {
-            "candidate_evaluations": [_candidate_diagnostic(c, selected=c is selected)
-                                      for c in additional_candidates],
-            "generated_candidates": len(additional_candidates),
-            "planning_wall_time_s": time.perf_counter() - started}
-        return selected
-    plan = search_relocation_plan(
-        robots=cluster,
-        dag_robots=dag_robots,
-        priority_robot_ids=(robot.robot_id for robot in workers),
-        participant_ids=(robot.robot_id for robot in cluster),
-        tasks=tasks,
-        task_status=task_status,
-        objects=objects,
-        navigation_cells=navigation_cells,
-        robot_radius=robot_radius,
-        grid_size=grid_size,
-        speed_cells_per_second=speed_cells_per_second,
-        additional_candidates=additional_candidates,
-        external_protected_paths=external_protected_paths,
-        selection_policy=selection_policy,
-        planning_timeout_s=planning_timeout_s,
-        dag_bound_pruning=False,
-        local_time_evaluator=lambda candidate: _local_resolution_time(
-            candidate, dag_robots, cluster_ids, navigation_cells,
-            robot_radius, grid_size, speed_cells_per_second, objects),
-        diagnostics=diagnostics,
-        use_dag_priority=use_dag_priority,
-        incremental_dag_evaluation=incremental_dag_evaluation,
-        dag_candidate_refiner=(
-            execution_candidate_refiner if execution_candidate_refiner is not None else
-            _make_release_refiner(dag_robots,tasks,task_status,objects,navigation_cells,
-                robot_radius,grid_size,speed_cells_per_second,cluster_ids,release_prediction_model,
-                anticipated_delay_horizon,
-                hypothesis_workers=hypothesis_workers)
-            if selection_policy == "dag_aware" and use_release_prediction
-                and preserve_priority_corridor and not use_anticipated_delays else None
-        ),
-        anticipated_delay_horizon=(anticipated_delay_horizon
-                                  if selection_policy == "dag_aware" and use_anticipated_delays else None),
-        preserve_priority_corridor=preserve_priority_corridor,
-        negotiation_selector=(negotiation.make_selector(
-            dag_robots, negotiation_state, speed_cells_per_second, cluster_ids)
-            if selection_policy == "negotiation_adapted" else None),
-    )
-    plan["search_stats"]["planning_wall_time_s"] = time.perf_counter() - started
-    return plan
-
-
-def _make_release_refiner(robots, tasks, task_status, objects, navigation_cells,
-                          robot_radius, grid_size, speed, participants,
-                          model="dynamic_events_guarded", horizon=5., hypothesis_workers=1):
-    """Use the current guarded, candidate-conditioned timing predictor."""
-    if model != "dynamic_events_guarded":
-        raise ValueError(f"Unsupported release prediction model: {model}")
-    from .dynamic_release import refine_dynamic_release_events
-
-    def refine(candidates, stats, deadline, baseline_finishes, baseline_distance):
-        return refine_dynamic_release_events(
-            candidates, robots=robots, tasks=tasks, task_status=task_status,
-            objects=objects, navigation_cells=navigation_cells,
-            robot_radius=robot_radius, grid_size=grid_size, speed=speed,
-            participants=participants, stats=stats, search_deadline=deadline,
-            baseline_finishes=baseline_finishes, baseline_distance=baseline_distance,
-            horizon=horizon, budget_s=5.,
-            hypothesis_workers=hypothesis_workers)
-    return refine
-
-
-class StandaloneSimulation:
+class GridSimulation(GridRenderer):
     def __init__(self, world_file, width=1400, height=760, speed=8.0,
                  selection_policy="dag_aware", async_planning=True,
                  initial_world=None, assignment_result=None,
@@ -533,100 +173,6 @@ class StandaloneSimulation:
         self._print_assignment_summary()
         self.reset()
 
-    def _pixel(self, cell):
-        min_x, _, _, max_z = self.bounds
-        return (
-            int(round(self.offset_x + (cell[0] - min_x + 0.5) * self.scale)),
-            int(round(self.offset_y + (max_z - cell[1] + 0.5) * self.scale)),
-        )
-
-    def _cell_from_pixel(self, pixel_x, pixel_y):
-        """Convert a window pixel to the nearest JSON grid coordinate."""
-        min_x, _, _, max_z = self.bounds
-        cell_x = math.floor((pixel_x - self.offset_x) / self.scale) + min_x
-        cell_z = max_z - math.floor((pixel_y - self.offset_y) / self.scale)
-        return int(cell_x), int(cell_z)
-
-    @staticmethod
-    def _draw_dashed_path(frame, pixels, color, thickness=3, dash=8, gap=5):
-        """Draw a polyline as evenly spaced anti-aliased dashes."""
-        pattern = dash + gap
-        travelled = 0.0
-        for start, end in zip(pixels, pixels[1:]):
-            start = np.asarray(start, dtype=float)
-            end = np.asarray(end, dtype=float)
-            vector = end - start
-            length = float(np.linalg.norm(vector))
-            if length == 0.0:
-                continue
-            direction = vector / length
-            offset = 0.0
-            while offset < length:
-                phase = (travelled + offset) % pattern
-                step = min(length - offset, pattern - phase)
-                if phase < dash:
-                    draw_length = min(step, dash - phase)
-                    point_a = tuple(np.rint(start + direction * offset).astype(int))
-                    point_b = tuple(
-                        np.rint(start + direction * (offset + draw_length)).astype(int)
-                    )
-                    cv2.line(
-                        frame,
-                        point_a,
-                        point_b,
-                        color,
-                        thickness,
-                        cv2.LINE_AA,
-                    )
-                offset += step
-            travelled += length
-
-    def _on_mouse(self, event, pixel_x, pixel_y, _flags, _parameter):
-        if pixel_x >= self.dag_left:
-            self.hover_cell = None
-            return
-        cell = self._cell_from_pixel(pixel_x, pixel_y)
-        self.hover_cell = cell
-        if event != cv2.EVENT_LBUTTONDOWN:
-            return
-        self.selected_cell = cell
-        world_x = cell[0] * self.world.grid_size
-        world_z = cell[1] * self.world.grid_size
-        if cell in self.world.navigation_cells:
-            state = "NAVIGABLE"
-        elif cell in self.world.free_cells:
-            state = "ROBOT_CLEARANCE"
-        else:
-            state = "BLOCKED"
-        print(
-            f"Selected map coordinate: cell=[{cell[0]}, {cell[1]}], "
-            f"world_m=[{world_x:.2f}, {world_z:.2f}], state={state}"
-        )
-
-    def _draw_map(self):
-        frame = np.full((self.height, self.width, 3), 32, dtype=np.uint8)
-        for cell in self.world.free_cells:
-            centre = self._pixel(cell)
-            half = self.scale / 2
-            cv2.rectangle(
-                frame,
-                (int(centre[0] - half), int(centre[1] - half)),
-                (int(centre[0] + half), int(centre[1] + half)),
-                (248, 248, 248),
-                -1,
-            )
-        if self.scale >= 5:
-            for cell in self.world.free_cells:
-                centre = self._pixel(cell)
-                half = self.scale / 2
-                cv2.rectangle(
-                    frame,
-                    (int(centre[0] - half), int(centre[1] - half)),
-                    (int(centre[0] + half), int(centre[1] + half)),
-                    (220, 220, 220),
-                    1,
-                )
-        return frame
 
     def reset(self):
         for pending in getattr(self, "pending_conflict_plans", {}).values():
@@ -2309,301 +1855,6 @@ class StandaloneSimulation:
         robot.cell = next_cell
         robot.path_index = next_index
 
-    def _draw(self):
-        frame = self.background.copy()
-        visible_objects = sorted(
-            self.objects.values(),
-            key=lambda value: bool(value.get("contained_by")),
-        )
-        contained_counts = {}
-        for item in visible_objects:
-            if not item.get("visible", True):
-                continue
-            color = tuple(item.get("color_bgr", (80, 180, 230)))
-            if item.get("shape", "point") == "segment":
-                start = self._pixel(item["start_cell"])
-                end = self._pixel(item["end_cell"])
-                thickness = max(
-                    3,
-                    int((2 * item.get("thickness_cells", 0) + 1) * self.scale),
-                )
-                cv2.line(frame, start, end, color, thickness, cv2.LINE_AA)
-                centre = self._pixel(item["cell"])
-                radius = thickness // 2
-            else:
-                display_cell = item["cell"]
-                container = item.get("contained_by")
-                if container:
-                    index = contained_counts.get(container, 0)
-                    contained_counts[container] = index + 1
-                    display_cell = (
-                        display_cell[0] + (-1 if index % 2 == 0 else 1),
-                        display_cell[1] + index // 2,
-                    )
-                centre = self._pixel(display_cell)
-                radius = max(5, int(item.get("radius_cells", 1) * self.scale))
-                cv2.circle(frame, centre, radius, color, -1, cv2.LINE_AA)
-            state_suffix = (
-                " (OPEN)"
-                if item.get("is_open")
-                else " (ON)" if item.get("is_on") else ""
-            )
-            cv2.putText(
-                frame,
-                item["name"] + state_suffix,
-                (centre[0] + radius + 3, centre[1] - 3),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (0, 0, 0),
-                3,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                frame,
-                item["name"] + state_suffix,
-                (centre[0] + radius + 3, centre[1] - 3),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-
-        radius = max(
-            7,
-            int(self.world.robot_radius / self.world.grid_size * self.scale),
-        )
-        for robot in self.robots:
-            if (
-                self.show_paths
-                and (self._is_navigating(robot) or robot.phase == "preview")
-                and robot.path_index < len(robot.path) - 1
-            ):
-                pixels = np.array(
-                    [self._pixel(cell) for cell in robot.path[robot.path_index:]],
-                    dtype=np.int32,
-                )
-                if robot.phase == "preview":
-                    self._draw_dashed_path(frame, pixels, robot.color)
-                else:
-                    cv2.polylines(
-                        frame,
-                        [pixels],
-                        False,
-                        robot.color,
-                        2,
-                        cv2.LINE_AA,
-                    )
-            centre = self._pixel(robot.cell)
-            cv2.circle(frame, centre, radius, robot.color, -1, cv2.LINE_AA)
-            cv2.circle(frame, centre, radius, (10, 10, 10), 2, cv2.LINE_AA)
-            cv2.putText(
-                frame,
-                robot.robot_id,
-                (centre[0] + radius + 4, centre[1] - 4),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (10, 10, 10),
-                2,
-                cv2.LINE_AA,
-            )
-            if robot.phase == "acting":
-                cv2.putText(
-                    frame,
-                    f"{robot.current_task['action']} {robot.action_remaining:.1f}s",
-                    (centre[0] + radius + 4, centre[1] + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.42,
-                    (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-            elif robot.phase == "preview":
-                cv2.putText(
-                    frame,
-                    f"preferred path {robot.preview_remaining:.1f}s",
-                    (centre[0] + radius + 4, centre[1] + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.42,
-                    (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-        self._draw_dag(frame)
-        inspected_cell = self.selected_cell or self.hover_cell
-        if inspected_cell is not None:
-            centre = self._pixel(inspected_cell)
-            if inspected_cell in self.world.navigation_cells:
-                state = "NAVIGABLE"
-            elif inspected_cell in self.world.free_cells:
-                state = "ROBOT_CLEARANCE"
-            else:
-                state = "BLOCKED"
-            world_x = inspected_cell[0] * self.world.grid_size
-            world_z = inspected_cell[1] * self.world.grid_size
-            cv2.drawMarker(
-                frame,
-                centre,
-                (0, 0, 255),
-                cv2.MARKER_CROSS,
-                max(12, int(self.scale * 2)),
-                2,
-                cv2.LINE_AA,
-            )
-            cv2.rectangle(
-                frame,
-                (14, self.height - 42),
-                (self.map_width - 14, self.height - 10),
-                (15, 15, 15),
-                -1,
-            )
-            cv2.putText(
-                frame,
-                (
-                    f"cell=[{inspected_cell[0]}, {inspected_cell[1]}]  "
-                    f"world=[{world_x:.2f}, {world_z:.2f}] m  {state}"
-                ),
-                (24, self.height - 19),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.58,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-        status = "PAUSED" if self.paused else "RUNNING"
-        cv2.putText(
-            frame,
-            f"{status} | Click: pin coordinate | Space: pause | R: reset | "
-            "P: paths | Q/Esc: quit",
-            (20, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (235, 235, 235),
-            1,
-            cv2.LINE_AA,
-        )
-        return frame
-
-    def _task_depths(self):
-        tasks = {task["id"]: task for task in self.tasks}
-        depths = {}
-
-        def depth(task_id):
-            if task_id in depths:
-                return depths[task_id]
-            dependencies = tasks[task_id]["node"]
-            depths[task_id] = (
-                max((depth(predecessor) for predecessor in dependencies), default=-1)
-                + 1
-            )
-            return depths[task_id]
-
-        for task_id in tasks:
-            depth(task_id)
-        return depths
-
-    def _draw_dag(self, frame):
-        """Draw the live dependency graph beside the occupancy map."""
-        cv2.rectangle(
-            frame,
-            (self.dag_left, 0),
-            (self.width - 1, self.height - 1),
-            (24, 24, 24),
-            -1,
-        )
-        cv2.line(
-            frame,
-            (self.dag_left, 0),
-            (self.dag_left, self.height),
-            (90, 90, 90),
-            2,
-        )
-        cv2.putText(
-            frame,
-            "LIVE TASK DAG",
-            (self.dag_left + 18, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.72,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        if not self.tasks:
-            return
-
-        depths = self._task_depths()
-        robot_ids = [robot.robot_id for robot in self.robots]
-        lane_width = (self.width - self.dag_left - 24) / max(1, len(robot_ids))
-        max_depth = max(depths.values(), default=0)
-        level_height = min(88.0, (self.height - 100) / max(1, max_depth + 1))
-        centres = {}
-        for task in self.tasks:
-            lane = robot_ids.index(task["robot"])
-            centres[task["id"]] = (
-                int(self.dag_left + 12 + (lane + 0.5) * lane_width),
-                int(70 + (depths[task["id"]] + 0.5) * level_height),
-            )
-
-        for task in self.tasks:
-            end = centres[task["id"]]
-            for predecessor in task["node"]:
-                start = centres[predecessor]
-                cv2.arrowedLine(
-                    frame,
-                    (start[0], start[1] + 22),
-                    (end[0], end[1] - 22),
-                    (150, 150, 150),
-                    1,
-                    cv2.LINE_AA,
-                    tipLength=0.12,
-                )
-
-        status_colors = {
-            "pending": (75, 75, 75),
-            "planned": (160, 80, 180),
-            "running": (210, 120, 20),
-            "acting": (20, 150, 240),
-            "completed": (55, 170, 70),
-        }
-        node_half_width = max(42, int(lane_width / 2 - 7))
-        for task in self.tasks:
-            centre = centres[task["id"]]
-            status = self.task_status.get(task["id"], "pending")
-            color = status_colors.get(status, (75, 75, 75))
-            cv2.rectangle(
-                frame,
-                (centre[0] - node_half_width, centre[1] - 21),
-                (centre[0] + node_half_width, centre[1] + 21),
-                color,
-                -1,
-            )
-            cv2.rectangle(
-                frame,
-                (centre[0] - node_half_width, centre[1] - 21),
-                (centre[0] + node_half_width, centre[1] + 21),
-                (225, 225, 225),
-                1,
-            )
-            cv2.putText(
-                frame,
-                f"T{task['id']} {task['robot']}",
-                (centre[0] - node_half_width + 5, centre[1] - 4),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.42,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                frame,
-                f"{task['action']} {task['object']}",
-                (centre[0] - node_half_width + 5, centre[1] + 13),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.34,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
 
     def run(self):
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
@@ -2639,7 +1890,7 @@ class StandaloneSimulation:
     def close(self):
         """Stop background planning workers without committing late results."""
         if getattr(self, "hypothesis_workers", 1) > 1:
-            from .dynamic_release import close_hypothesis_pools
+            from core.coordination.dynamic_release import close_hypothesis_pools
             close_hypothesis_pools()
         for pending in getattr(self, "pending_conflict_plans", {}).values():
             pending["future"].cancel()
@@ -2659,7 +1910,7 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
     candidate that needs them has infinite (uncertified) local release time.
     Reroutes end their intervention at rejoining the original route suffix.
     """
-    sim = StandaloneSimulation.__new__(StandaloneSimulation)
+    sim = GridSimulation.__new__(GridSimulation)
     sim.world = SimpleNamespace(navigation_cells=navigation_cells,
         grid_size=grid_size, robot_radius=robot_radius)
     sim.steps_per_second = speed
@@ -2677,7 +1928,7 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
     for robot in sim.robots:
         if robot.current_task is not None:
             duration = float(robot.current_task.get("duration", 0.0))
-            destination = StandaloneSimulation._destination_name(robot.current_task)
+            destination = GridSimulation._destination_name(robot.current_task)
             robot.current_task = dict(id=robot.robot_id, action="toggle_on",
                 object=robot.robot_id, duration=duration, node=[])
             sim.task_status[robot.robot_id] = "running"
@@ -2767,10 +2018,10 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
     return math.inf
 
 
-def run_standalone_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
+def run_grid_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
                               planner_workers=None, release_prediction_model="dynamic_events_guarded",
                               hypothesis_workers=1):
-    StandaloneSimulation(world_file, speed=speed, selection_policy=selection_policy,
+    GridSimulation(world_file, speed=speed, selection_policy=selection_policy,
                          planner_workers=planner_workers,
                          hypothesis_workers=hypothesis_workers,
                          release_prediction_model=release_prediction_model).run()

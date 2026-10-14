@@ -11,7 +11,7 @@ from matplotlib.patches import Rectangle
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-from simulations.standalone.world import load_world
+from simulations.grid.world import load_world
 
 
 def export_map(source, output):

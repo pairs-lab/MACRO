@@ -8,9 +8,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from core import distance_to_polyline, select_clearance_top_k
-from simulations.standalone.dynamic_collision import swept_robot_corridor
-from simulations.standalone.planner import path_length, _MOVES
-from simulations.standalone.relocation_search import (
+from core.coordination.dynamic_collision import swept_robot_corridor
+from core.coordination.planner import path_length, _MOVES
+from core.coordination.relocation_search import (
     _nearest_feasible_relocations, _route_exits_without_reentry,
     _route_clears_robot_bodies, _direction_group,
 )
@@ -76,7 +76,7 @@ def full_path_reference(*, mover_id, positions, protected_paths,
     goals = navigation_cells - forbidden - occupied - {start}
     scan_count = (len(goals) if route_scan_budget is None else
                   min(len(goals), max(path_budget, int(route_scan_budget))))
-    from simulations.standalone.planner import shortest_path_distances
+    from core.coordination.planner import shortest_path_distances
     reachable = (None if goal is None else
                  set(shortest_path_distances(navigation_cells, goal)))
     candidates = []

@@ -13,7 +13,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from simulations.standalone.world import load_world
+from simulations.grid.world import load_world
 
 
 WINDOW_NAME = "Map view (no robots or objects)"

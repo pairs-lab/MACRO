@@ -6,9 +6,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from simulations.standalone import planner, native_geometry
-from simulations.standalone.clearance_geometry import protected_geometry, endpoint_margin, endpoint_margins
-from simulations.standalone.relocation_search import _nearest_feasible_relocations, _clearance_tree_prefixes
+from core.coordination import planner, native_geometry
+from core.coordination.clearance_geometry import protected_geometry, endpoint_margin, endpoint_margins
+from core.coordination.relocation_search import _nearest_feasible_relocations, _clearance_tree_prefixes
 from core.yielding import distance_to_polyline, _prepare_polyline, _distance_to_prepared_polyline
 
 

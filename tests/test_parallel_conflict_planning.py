@@ -9,12 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from simulations.standalone.app import RobotState, StandaloneSimulation
+from simulations.grid.app import RobotState, GridSimulation
 
 
 class ParallelConflictPlanningTests(unittest.TestCase):
     def make_sim(self):
-        sim = object.__new__(StandaloneSimulation)
+        sim = object.__new__(GridSimulation)
         sim.robots = [RobotState(f"R{i + 1}", (i * 20, 0), (0, 0, 0),
                                  phase="moving", current_task={"id": i})
                       for i in range(5)]

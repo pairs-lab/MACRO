@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
-from simulations.standalone import relocation_search as search
-from simulations.standalone.app import _compute_conflict_plan
+from core.coordination import relocation_search as search
+from simulations.grid.app import _compute_conflict_plan
 import test_runtime_policies as old_tests
 
 

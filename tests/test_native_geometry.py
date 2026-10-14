@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from simulations.standalone import planner, native_geometry
-from simulations.standalone.relocation_search import _clearance_tree_prefixes
+from core.coordination import planner, native_geometry
+from core.coordination.relocation_search import _clearance_tree_prefixes
 
 
 @unittest.skipIf(native_geometry._native is None, 'optional C++ extension not installed')

@@ -7,10 +7,8 @@ import time
 from itertools import islice
 
 from core import optimize
-from simulations.ai2thor.config import (
-    ONLINE_RELEASE_CANDIDATE_COUNT,
-    ONLINE_REPLANNING_ROBOT_SPEED,
-)
+DEFAULT_RELEASE_CANDIDATE_COUNT = 16
+DEFAULT_ROBOT_SPEED = 1.0
 
 
 DEFAULT_MAX_CANDIDATES_PER_ROOT = 12
@@ -279,7 +277,7 @@ def _log_dag_estimate(candidate, evaluation):
     elif candidate["release_moves"]:
         release_text = ", ".join(
             f"R{release['blocker_agent'] + 1} "
-            f"{release['release_distance'] / ONLINE_REPLANNING_ROBOT_SPEED:.2f}s"
+            f"{release['release_distance'] / DEFAULT_ROBOT_SPEED:.2f}s"
             for release in candidate["release_moves"]
         )
         print(f"    Release: {release_text}")
@@ -385,7 +383,7 @@ def build_priority_hypotheses(
     blocker_ranker,
     release_planner,
     remaining_estimator=None,
-    robot_speed=ONLINE_REPLANNING_ROBOT_SPEED,
+    robot_speed=DEFAULT_ROBOT_SPEED,
     candidate_validator=None,
     selection_policy="dag_aware",
     max_candidates_per_root=DEFAULT_MAX_CANDIDATES_PER_ROOT,
@@ -616,7 +614,7 @@ def build_priority_hypotheses(
                 release_options = [release_options]
             for release in islice(
                 release_options,
-                ONLINE_RELEASE_CANDIDATE_COUNT,
+                DEFAULT_RELEASE_CANDIDATE_COUNT,
             ):
                 next_overrides = dict(position_overrides)
                 next_overrides[blocker_agent] = release[

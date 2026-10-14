@@ -2,7 +2,7 @@
 from copy import deepcopy
 import unittest
 from tests.test_runtime_policies import fixture
-from simulations.standalone.app import _compute_conflict_plan
+from simulations.grid.app import _compute_conflict_plan
 
 
 class ExecutionEvaluatorTests(unittest.TestCase):

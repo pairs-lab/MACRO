@@ -5,8 +5,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from simulations.standalone import planner
-from simulations.standalone.relocation_search import _nearest_feasible_relocations
+from core.coordination import planner
+from core.coordination.relocation_search import _nearest_feasible_relocations
 
 
 class GeometryCacheCopyTests(unittest.TestCase):

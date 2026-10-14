@@ -5,7 +5,7 @@ import threading
 from itertools import islice
 
 from ..replanning.multi_agent_scheduler import MultiAgentReplanScheduler
-from ..replanning.minimum_disruption import select_minimum_disruption_plan
+from core.coordination.interaction_search import select_minimum_disruption_plan
 from simulations.ai2thor.config import (
     AGENT_COUNT,
     NAVIGATION_STEP_DELAY,

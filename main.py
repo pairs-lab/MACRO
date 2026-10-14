@@ -10,7 +10,7 @@ SRC_DIRECTORY = PROJECT_ROOT / "src"
 if str(SRC_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SRC_DIRECTORY))
 
-from simulations.standalone import run_standalone_simulation
+from simulations.grid import run_grid_simulation
 from tools.maps.map_tags import scene_path
 
 
@@ -172,7 +172,7 @@ def main():
 
         MapViewer(world).run()
         return
-    run_standalone_simulation(world, speed=args.speed, selection_policy=args.policy,
+    run_grid_simulation(world, speed=args.speed, selection_policy=args.policy,
                              planner_workers=args.planner_workers,
                              hypothesis_workers=args.hypothesis_workers,
                              release_prediction_model=args.release_prediction_model)
