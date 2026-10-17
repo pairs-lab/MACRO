@@ -18,7 +18,6 @@ def _excluded(path: Path) -> bool:
     parts = {part.casefold() for part in path.parts}
     return (
         path.parts[0] in {"benchmarks", "experiments", "docs", ".agents", ".codex", "results", "videos"}
-        or path.parts[:2] == ("tests", "local")
         or path.as_posix() in {"plot.py", "run.sh"}
         or "__pycache__" in parts
         or ".pytest_cache" in parts

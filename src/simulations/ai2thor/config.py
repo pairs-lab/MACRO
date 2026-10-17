@@ -157,7 +157,6 @@ NAVIGATION_PADDING = 0.05
 # Centre-to-centre clearance reserved around every other real agent. This is
 # larger than two agent radii so A* does not merely graze a stationary robot.
 MULTI_AGENT_CLEARANCE = 2 * ROBOT_SAFETY_RADIUS
-NAVIGATION_REPLAN_ATTEMPTS = 3
 NAVIGATION_CACHE_ENABLED = True
 SHOW_NAVIGATION_PATH = False
 NAVIGATION_PATH_PREVIEW_SECONDS = 0.0
@@ -214,7 +213,6 @@ TASK_ACTION_DURATIONS = {
     "wash": 1.0,
 }
 
-ONLINE_REPLANNING_ROBOT_SPEED = 1.0
 # Search a broad local area for parking when a narrow route has to be cleared.
 # A* still minimizes distance, so this is only a feasibility bound.
 ONLINE_ASIDE_MAX_DISTANCE = 2.50

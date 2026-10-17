@@ -187,22 +187,6 @@ class RobotCamera:
             parameters["fieldOfView"] = self.field_of_view
         return parameters
 
-    def parameters_looking_at(self, event, target):
-        """Build camera parameters aimed at a world-space target."""
-        agent = event.metadata["agent"]
-        position = agent["position"]
-        delta_x = target["x"] - position["x"]
-        delta_z = target["z"] - position["z"]
-        horizontal_distance = max(math.hypot(delta_x, delta_z), 1e-6)
-        camera_y = position["y"] + self.eye_height
-        pitch = math.degrees(math.atan2(camera_y - target["y"], horizontal_distance))
-        return self.parameters_for_pose(
-            position,
-            math.degrees(math.atan2(delta_x, delta_z)) % 360,
-            pitch=max(10, min(80, pitch)),
-        )
-
-
 def setup_cameras(controller):
     """Create the overhead camera; native agent frames provide robot POV."""
     properties_event = controller.step(action="GetMapViewCameraProperties")

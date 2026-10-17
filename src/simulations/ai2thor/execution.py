@@ -169,17 +169,6 @@ def build_action_sequence(plan: dict) -> list[dict]:
     return commands
 
 
-def save_action_sequence(commands: list[dict], output_file) -> Path:
-    """Save generated commands as JSON for inspection or replay."""
-    path = Path(output_file).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(commands, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return path
-
-
 class ExecutionPlanExecutor:
     """Dependency-aware executor with one event-driven worker per robot."""
 
@@ -239,10 +228,6 @@ class ExecutionPlanExecutor:
             for predecessor, successor in zip(task_ids, task_ids[1:]):
                 dependencies[successor].add(predecessor)
         return dependencies
-
-    def is_task_completed(self, task_id: int) -> bool:
-        with self._condition:
-            return self._task_status.get(task_id) == "completed"
 
     def estimate_conflict_candidate(
         self,
@@ -449,7 +434,6 @@ class ExecutionPlanExecutor:
 
         durations = {}
         for task_id in remaining:
-            action = self.task_by_id[task_id]["action"]
             duration = task_action_duration(self.task_by_id[task_id])
             if statuses.get(task_id) == "executing_action":
                 duration = max(
@@ -574,23 +558,6 @@ class ExecutionPlanExecutor:
                 if self._failure is not None:
                     raise RuntimeError("A task dependency failed")
                 self._condition.wait(timeout=0.05)
-
-    def estimate_remaining_action_time(self, robot: str) -> float:
-        """Estimate unfinished manipulation time from this robot's task chain."""
-        with self._condition:
-            total = 0.0
-            now = time.monotonic()
-            for task_id in self.plan["robot_plans"].get(robot, []):
-                status = self._task_status[task_id]
-                if status in {"completed", "action_done", "failed"}:
-                    continue
-                action = self.task_by_id[task_id]["action"]
-                duration = task_action_duration(self.task_by_id[task_id])
-                if status == "executing_action":
-                    elapsed = now - self._action_started_at.get(task_id, now)
-                    duration = max(0.0, duration - elapsed)
-                total += duration
-            return total
 
     def _wait_for_action_duration(self, task_id: int, duration: float) -> None:
         """Keep an atomic task active for its configured physical duration."""

@@ -38,6 +38,15 @@ python main.py --help
 
 For creating maps and changing robot/object positions, see [Map tools](tools/maps/README.md).
 
+### T-junction demo
+
+```bash
+python main.py map5 scene1 --speed 1 --planner-workers 1
+python main.py map5 scene2 --speed 1 --planner-workers 1
+```
+
+Two robots exchange sides while a third occupies the clearance branch. The algorithm selects the priority and clearance moves online. See [scenario details](maps/map5/README.md).
+
 ## AI2-THOR (optional)
 
 Requires a graphical environment and a working Unity installation/runtime.
@@ -73,16 +82,8 @@ This is a simulation adapter, not a validated physical-robot deployment. Its con
 | `tools/maps/` | Map creation, editing and export utilities. |
 | `maps/`, `maps_ai2thor/` | Example maps and mission configurations. |
 | `native/` | Optional C++ acceleration modules. |
-| `tests/` | Core regression tests. |
 
-## Tests
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
-```
-
-Optional native dependencies must be built to exercise their tests. Generated outputs, local datasets and credentials are excluded by `.gitignore`.
+Generated outputs, local datasets and credentials are excluded by `.gitignore`.
 
 The adapters retain their environment-specific execution semantics. Sharing the core does not imply identical controllers or prediction models across the three environments.
 

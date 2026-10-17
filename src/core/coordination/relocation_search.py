@@ -11,21 +11,18 @@ import time
 from collections import defaultdict
 
 from core import (
-    distance_to_polyline,
     optimize,
     order_dag_priorities,
     clearance_yield_key,
-    select_clearance_top_k,
 )
 
-from .dynamic_collision import swept_robot_corridor, swept_separation
+from .dynamic_collision import swept_separation
 from .planner import (
     path_length,
     preferred_path_to_object,
     select_dynamic_replan_path,
     select_preferred_path,
     shortest_path_distances,
-    shortest_paths_to_any,
     shortest_path_tree_to_any,
     with_geometry_cache,
 )
@@ -191,7 +188,6 @@ def _candidate_diagnostic(candidate, selected=False):
         "nominal_estimated_makespan": candidate.get("nominal_estimated_makespan"),
         "lookahead_shortlisted": candidate.get("lookahead_shortlisted"),
         "lookahead": candidate.get("lookahead"),
-        "anticipated_delay": candidate.get("anticipated_delay"),
         "protected_priority_corridor": candidate.get("protected_priority_corridor"),
         "release_prediction": candidate.get("release_prediction"),
     }
@@ -774,35 +770,6 @@ def _timed_path_conflict(first_path, second_path, clearance_cells):
     return math.dist(first[-1], second[-1]) <= clearance_cells + epsilon
 
 
-def _find_conflict(
-    paths,
-    positions,
-    working_ids,
-    clearance_cells,
-    ignore_pairs=(),
-):
-    """Return one unresolved path/path or path/stationary-body conflict."""
-    ignored = {frozenset(pair) for pair in ignore_pairs}
-    ids = sorted(positions)
-    for index, first_id in enumerate(ids):
-        for second_id in ids[index + 1 :]:
-            if frozenset((first_id, second_id)) in ignored:
-                continue
-            first_path = paths.get(first_id)
-            second_path = paths.get(second_id)
-            if first_path is not None and second_path is not None:
-                if _timed_path_conflict(first_path, second_path, clearance_cells):
-                    return first_id, second_id, "path-path"
-                continue
-            if first_path is not None:
-                if _path_conflict(first_path, [positions[second_id]], clearance_cells):
-                    return first_id, second_id, "path-body"
-            elif second_path is not None:
-                if _path_conflict([positions[first_id]], second_path, clearance_cells):
-                    return first_id, second_id, "body-path"
-    return None
-
-
 def _direction_group(start, destination):
     dx = destination[0] - start[0]
     dz = destination[1] - start[1]
@@ -820,29 +787,6 @@ def _route_exits_without_reentry(route, forbidden):
         elif has_exited:
             return False
     return has_exited
-
-
-def _route_clears_robot_bodies(route, mover_id, positions, clearance_cells):
-    """Permit separation from contact, but never move deeper through a robot."""
-    epsilon = 1e-9
-    for robot_id, centre in positions.items():
-        if robot_id == mover_id:
-            continue
-        initial = math.dist(route[0], centre)
-        previous = initial
-        cleared = initial > clearance_cells
-        for cell in route[1:]:
-            distance = math.dist(cell, centre)
-            if cleared:
-                if distance <= clearance_cells + epsilon:
-                    return False
-            else:
-                if distance + epsilon < previous:
-                    return False
-                if distance > clearance_cells + epsilon:
-                    cleared = True
-            previous = distance
-    return True
 
 
 def _clearance_tree_prefixes(parent, settled, start, forbidden, centres,
@@ -916,7 +860,6 @@ def _nearest_feasible_relocations(
     grid_size,
     speed,
     goal=None,
-    nominal_path=None,
     path_budget=RELOCATION_PATH_BUDGET,
     route_scan_budget=None,
 ):
@@ -1098,7 +1041,6 @@ def search_relocation_plan(
     use_dag_priority=True,
     incremental_dag_evaluation=True,
     dag_candidate_refiner=None,
-    anticipated_delay_horizon=None,
     preserve_priority_corridor=True,
     negotiation_selector=None,
     allow_composed_clearance=True,
@@ -1387,7 +1329,6 @@ def search_relocation_plan(
         for step in relocations:
             if step["robot_id"] != priority_id:
                 delay_by_robot[step["robot_id"]] += priority_wait
-        affected_robot_ids = set(delay_by_robot) | set(paths)
         makespan, task_distance, finish_times = math.nan, sum(
             path_length(route, grid_size) for route in paths.values()), {}
         total_distance = relocation_distance + task_distance
@@ -1608,8 +1549,8 @@ def search_relocation_plan(
                 continue
             # A holding pose clears the active priority horizon. Other
             # participants are frozen while relocation steps execute, so
-            # their bodies are handled by ``occupied`` and
-            # ``_route_clears_robot_bodies`` rather than treating all future
+            # their bodies are handled by ``occupied`` and the body-clearance
+            # checks rather than treating all future
             # task routes as simultaneous permanent obstacles.
             protected = {priority_id: priority_horizon}
             protected.update({
@@ -1626,7 +1567,6 @@ def search_relocation_plan(
                 grid_size=grid_size,
                 speed=speed_cells_per_second,
                 goal=robots_by_id[mover_id].goal,
-                nominal_path=initial_paths.get(mover_id),
             )
             if not candidates:
                 stats["no_path_pruned"] += 1
@@ -1636,6 +1576,11 @@ def search_relocation_plan(
                 len(navigation_cells) - len(candidates),
             )
             for step in candidates:
+                # Reservation keys may identify several paths for one external
+                # robot (e.g. ('R3', 0)); they constrain geometry but are NOT
+                # participants that this repair may hold or assign delays to.
+                step = dict(step, protects=tuple(rid for rid in step['protects']
+                                                if rid in search_ids))
                 next_positions = dict(positions)
                 next_positions[mover_id] = step["destination"]
                 dfs(
@@ -1691,7 +1636,6 @@ def search_relocation_plan(
                 grid_size=grid_size,
                 speed=speed_cells_per_second,
                 goal=robots_by_id[priority_id].goal,
-                nominal_path=initial_paths.get(priority_id),
                 path_budget=pool_budget,
                 route_scan_budget=pool_budget,
             )
@@ -1733,7 +1677,6 @@ def search_relocation_plan(
                     grid_size=grid_size,
                     speed=speed_cells_per_second,
                     goal=robots_by_id[blocker_id].goal,
-                    nominal_path=initial_paths.get(blocker_id),
                     route_scan_budget=(
                         len(navigation_cells)
                         if fallback_full_scan
@@ -1866,10 +1809,9 @@ def search_relocation_plan(
                 )
                 candidate["local_time_model"] = "current_execution_snapshot"
             stats["candidate_evaluations"][index] = _candidate_diagnostic(candidate)
-    candidate_evaluations = {}
     if evaluate_dag:
         for candidate in feasible_leaves:
-            if not math.isnan(candidate["estimated_makespan"]) and anticipated_delay_horizon is None:
+            if not math.isnan(candidate["estimated_makespan"]):
                 continue
             affected_robot_ids = (
                 set(candidate.get("delay_by_robot", {}))
@@ -1888,7 +1830,6 @@ def search_relocation_plan(
                 speed_cells_per_second=speed_cells_per_second,
                 relocation_delay_by_robot=candidate.get("delay_by_robot", {}),
                 include_travel=True, return_details=True,
-                return_evaluation=anticipated_delay_horizon is not None,
                 baseline_evaluation=(
                     baseline_evaluation
                     if incremental_dag_evaluation
@@ -1898,64 +1839,12 @@ def search_relocation_plan(
                 debug_logger=dag_debug_logger,
             )
             makespan, distance, finishes = evaluated[:3]
-            if anticipated_delay_horizon is not None:
-                candidate_evaluations[id(candidate)] = evaluated[3]
             distance += sum(step["distance"] for step in candidate.get("relocations", ()))
             candidate.update(estimated_makespan=makespan,
                 estimated_remaining_DAG_makespan=makespan, total_distance=distance,
                 additional_distance=max(0.0, distance - baseline_task_distance),
                 total_delay=sum(max(0.0, finish - baseline_finishes.get(tid, finish))
                                 for tid, finish in finishes.items()))
-    anticipated_applied = False
-    if evaluate_dag and anticipated_delay_horizon is not None:
-        from .anticipated_delay import estimate_future_delays
-        if not 0 < anticipated_delay_horizon <= 5:
-            raise ValueError("Anticipated reservation horizon must be in (0, 5] seconds")
-        future_started = time.perf_counter()
-        future_deadline = min(future_started+1., deadline if deadline is not None else math.inf)
-        pending_updates = []
-        try:
-            for candidate in feasible_leaves:
-                if time.perf_counter() >= future_deadline:
-                    raise TimeoutError("anticipated delay budget exhausted")
-                candidate_baseline = candidate_evaluations[id(candidate)]
-                delays, diagnostics = estimate_future_delays(candidate=candidate,
-                    evaluation=candidate_baseline, robots=list(dag_robots_by_id.values()),
-                    tasks=tasks, speed=speed_cells_per_second, grid_size=grid_size,
-                    robot_radius=robot_radius, horizon=anticipated_delay_horizon,
-                    deadline=future_deadline)
-                if delays:
-                    ca_makespan, _, ca_finishes = timed_dag_cost(
-                        tasks=tasks, task_status=task_status, robots_by_id=dag_robots_by_id,
-                        positions=dag_positions(candidate.get("final_positions", initial_positions)),
-                        preferred_paths=candidate["preferred_paths"], objects=objects,
-                        navigation_cells=navigation_cells, grid_size=grid_size,
-                        speed_cells_per_second=speed_cells_per_second,
-                        relocation_delay_by_robot=candidate.get("delay_by_robot", {}),
-                        include_travel=True, return_details=True,
-                        future_delay_by_task=delays, changed_task_ids=set(delays),
-                        baseline_evaluation=candidate_baseline if incremental_dag_evaluation else None,
-                        timing_only=bool(incremental_dag_evaluation), debug_logger=dag_debug_logger)
-                else:
-                    ca_makespan=candidate["estimated_makespan"]
-                    ca_finishes=candidate_baseline["finish_times"]
-                pending_updates.append((candidate,ca_makespan,ca_finishes,diagnostics))
-            if time.perf_counter() >= future_deadline:
-                raise TimeoutError("anticipated delay budget exhausted")
-            anticipated_applied = True
-        except TimeoutError as error:
-            stats["anticipated_delay"] = dict(status="fallback",reason=str(error))
-        if anticipated_applied:
-            for candidate,ca_makespan,ca_finishes,diagnostics in pending_updates:
-                candidate["nominal_estimated_makespan"] = candidate["estimated_makespan"]
-                candidate.update(estimated_makespan=ca_makespan,
-                    estimated_remaining_DAG_makespan=ca_makespan,
-                    total_delay=sum(max(0.,f-baseline_finishes.get(t,f)) for t,f in ca_finishes.items()),
-                    anticipated_delay=diagnostics)
-            stats["anticipated_delay"] = dict(status="applied",horizon_s=anticipated_delay_horizon,
-                candidates_evaluated=len(pending_updates),candidates_with_delay=sum(
-                    bool(d["delay_by_task"]) for _,_,_,d in pending_updates if "delay_by_task" in d))
-        stats["anticipated_delay"]["wall_time_s"] = time.perf_counter()-future_started
     ranked_candidates = feasible_leaves
     if evaluate_dag and dag_candidate_refiner is not None:
         check_deadline()
@@ -1974,9 +1863,7 @@ def search_relocation_plan(
             error.stats = stats
             raise
     else:
-        selected = (min(ranked_candidates,key=lambda c:(c["estimated_makespan"],
-                c["additional_distance"],_candidate_stable_key(c))) if anticipated_applied
-                else _select_resolution_candidate(ranked_candidates, selection_policy))
+        selected = _select_resolution_candidate(ranked_candidates, selection_policy)
     stats["candidate_evaluations"] = [
         _candidate_diagnostic(candidate, selected=candidate is selected)
         for candidate in feasible_leaves

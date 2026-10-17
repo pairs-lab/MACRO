@@ -17,8 +17,6 @@ class RobotState:
     preview_remaining: float = 0.0
     carrying: str | None = None
     waiting_for: str | None = None
-    clearing_for: tuple[str, ...] = ()
-    clearing_started: bool = False
     movement_credit: float = 0.0
     movement_edge: tuple | None = None
 

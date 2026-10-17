@@ -2,7 +2,6 @@
 
 import math
 
-from simulations.ai2thor.cameras import move_robot
 from simulations.ai2thor.config import (
     AGENT_COUNT,
     AGENT_RADIUS,
@@ -167,13 +166,6 @@ class Actions:
         if require_visible and not target.get("visible", False):
             raise ValueError(f"Object {object_type_or_id!r} is not visible")
         return target
-
-    def _target_id(self, robot, object_type_or_id, require_visible=False):
-        return self._target_object(
-            robot,
-            object_type_or_id,
-            require_visible=require_visible,
-        )["objectId"]
 
     def pick(self, robot, object_type_or_id, force_action=False):
         """Pick up the nearest object by objectType or objectId."""
@@ -621,41 +613,6 @@ class Actions:
         )
         target = self._require_interaction_pose(robot, target)
         return self._step(robot, "CloseObject", objectId=target["objectId"])
-
-    def slice(self, robot, object_type_or_id):
-        """Slice an object with a knife when the scene supports it."""
-        target = self._target_object(
-            robot,
-            object_type_or_id,
-            require_visible=True,
-        )
-        target = self._require_interaction_pose(robot, target)
-        return self._step(robot, "SliceObject", objectId=target["objectId"])
-
-    def move_away(self, robot, distance=0.35):
-        """Back away after using a location needed by another robot."""
-        agent_id = self._agent_id(robot)
-        event = move_robot(
-            self.controller,
-            self.robot_camera,
-            "MoveBack",
-            report_failure=False,
-            agent_id=agent_id,
-            moveMagnitude=distance,
-        )
-        if event is None:
-            message = self.controller.last_event.metadata.get(
-                "errorMessage", "Unknown collision"
-            )
-            raise RuntimeError(f"{robot} could not clear shared target: {message}")
-        if self.on_step is not None:
-            self.on_step(event)
-        return event
-
-    def execute(self, robot, action, **parameters):
-        """Execute a supported raw AI2-THOR action for a robot."""
-        return self._step(robot, action, **parameters)
-
 
 def create_action_function(controller, robot_camera, on_step=None):
     """Return an Actions object bound to the running simulation."""

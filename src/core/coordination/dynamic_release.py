@@ -179,7 +179,6 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
             return fallback('dynamic_event_budget')
         forecast_paths = dict(candidate['preferred_paths'])
         forecast_paths.update(release_info.get('continuation_paths', {}))
-        barrier = sum(float(step['delay']) for step in candidate.get('relocations', ()))
         if candidate['strategy'] == 'relocate':
             # Match the executor's release/continuation guards before scanning
             # future encounters. Staging completion alone is NOT a release.

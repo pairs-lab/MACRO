@@ -3,7 +3,6 @@
 Default direct launch spawns the conflict snapshot; run.sh selects approach.
 """
 from pathlib import Path
-import copy
 import json
 import os
 import yaml

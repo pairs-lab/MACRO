@@ -17,7 +17,6 @@ from .display import (
 )
 from .config import (
     OVERHEAD_WINDOW,
-    NAVIGATION_STEP_DELAY,
     SHOW_NAVIGATION_PATH,
 )
 from .grid_display import GridMapRenderer

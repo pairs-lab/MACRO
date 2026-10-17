@@ -12,7 +12,6 @@ from multiprocessing import get_context
 from types import SimpleNamespace
 
 import cv2
-import numpy as np
 
 from core import optimize_task_assignments
 
@@ -26,12 +25,10 @@ from core.coordination.planner import (
     dynamic_replan_candidates,
     path_length,
     preferred_path_to_object,
-    select_dynamic_replan_path,
 )
 from core.coordination.relocation_search import (
     _path_conflict,
     _route_exits_without_reentry,
-    evaluate_reroute_plan,
     search_relocation_plan,
 )
 from .world import load_world
@@ -54,9 +51,6 @@ def _compute_conflict_plan(**kwargs):
     """Bind grid execution timing to the shared snapshot-only coordinator."""
     return compute_conflict_plan(local_resolution_time_evaluator=_local_resolution_time, **kwargs)
 
-RUNTIME_ALGORITHM_REVISION = "bounded-release-events-v6-dag-recourse"
-
-
 WINDOW_NAME = "Standalone Multi-Robot Grid Simulation"
 _DEFAULT_COLORS = ((50, 80, 240), (235, 140, 30), (60, 190, 70))
 PATH_PREVIEW_SECONDS = 0.0
@@ -67,7 +61,6 @@ class GridSimulation(GridRenderer):
                  selection_policy="dag_aware", async_planning=True,
                  initial_world=None, assignment_result=None,
                  use_dag_priority=True, incremental_dag_evaluation=True,
-                 use_anticipated_delays=False,
                  anticipated_delay_horizon=5., preserve_priority_corridor=True,
                  use_release_prediction=True, release_prediction_model="dynamic_events_guarded",
                  planner_workers=None, hypothesis_workers=1):
@@ -81,7 +74,6 @@ class GridSimulation(GridRenderer):
         self.selection_policy = selection_policy
         self.use_dag_priority = bool(use_dag_priority)
         self.incremental_dag_evaluation = bool(incremental_dag_evaluation)
-        self.use_anticipated_delays = bool(use_anticipated_delays)
         self.preserve_priority_corridor = bool(preserve_priority_corridor)
         self.use_release_prediction = bool(use_release_prediction)
         if release_prediction_model != "dynamic_events_guarded":
@@ -356,8 +348,6 @@ class GridSimulation(GridRenderer):
             for robot_id in resolution["participants"]:
                 robot = self._robot(robot_id)
                 robot.waiting_for = None
-                robot.clearing_for = ()
-                robot.clearing_started = False
                 if robot.current_task is None:
                     robot.path = [robot.cell]
                     robot.path_index = 0
@@ -390,50 +380,6 @@ class GridSimulation(GridRenderer):
                     self.task_status[robot.current_task["id"]] = "running"
             print(f"Merged conflict cancels local resolution C{resolution_id}")
         return participants
-
-    def _build_short_replan_candidate(self, worker, blockers):
-        """Return a reroute while the other contact participants hold."""
-        clearance_cells = (
-            2.0 * self.world.robot_radius / self.world.grid_size
-        )
-        replanned = select_dynamic_replan_path(
-            self.world.navigation_cells,
-            worker.cell,
-            worker.goal,
-            stationary_robot_centres=(robot.cell for robot in blockers),
-            clearance_cells=clearance_cells,
-            robot_speed=self.steps_per_second,
-            candidate_count=3,
-        )
-        if replanned is None:
-            return None
-        protected_paths = {
-            robot.robot_id: self._remaining_path(robot)
-            for robot in self.robots
-            if robot.robot_id != worker.robot_id
-        }
-        if not _route_clears_protected_corridors(
-            replanned,
-            protected_paths,
-            self.world.robot_radius,
-            self.world.grid_size,
-        ):
-            return None
-
-        return evaluate_reroute_plan(
-            worker_id=worker.robot_id,
-            route=replanned,
-            robots=self.robots,
-            tasks=self.tasks,
-            task_status=self.task_status,
-            objects=self.objects,
-            navigation_cells=self.world.navigation_cells,
-            grid_size=self.world.grid_size,
-            speed_cells_per_second=self.steps_per_second,
-            held_robot_ids=[r.robot_id for r in blockers],
-            robot_radius=self.world.robot_radius,
-            evaluate_dag=False,
-        )
 
     def _begin_reroute_plan(self, plan, cluster_ids):
         """Execute the short-replan candidate selected by optimize()."""
@@ -642,7 +588,6 @@ class GridSimulation(GridRenderer):
                 self, "incremental_dag_evaluation", True
             ),
 
-            use_anticipated_delays=getattr(self, "use_anticipated_delays", False),
             anticipated_delay_horizon=getattr(self, "anticipated_delay_horizon", 5.),
             preserve_priority_corridor=getattr(self, "preserve_priority_corridor", True),
             use_release_prediction=(getattr(self, "use_release_prediction", True)
@@ -783,40 +728,6 @@ class GridSimulation(GridRenderer):
             else:
                 self._begin_resolution_plan(plan, pending["participants"])
 
-    def _service_hold_estimate(self, robot):
-        """Estimate consecutive service at this pose, up to the next trip.
-
-        This is a forecast, not a promise that the route will then be clear.
-        Live swept collision checks still control every movement edge.
-        """
-        duration = robot.action_remaining
-        predicted = deepcopy(self.objects)
-        done = {tid for tid, state in self.task_status.items() if state == "completed"}
-        current = robot.current_task
-        done.add(current["id"])
-        if current["action"] == "place":
-            target = predicted[current["target"]]
-            predicted[current["object"]]["cells"] = frozenset({target["cell"]})
-        for task in self.tasks:
-            if task["robot"] != robot.robot_id or task["id"] in done:
-                continue
-            if not set(task.get("node", ())) <= done:
-                break
-            destination = predicted[self._destination_name(task)]
-            route = preferred_path_to_object(
-                self.world.navigation_cells, robot.cell, destination["cells"],
-                interaction_cells=destination.get("interaction_cells"),
-                robot_speed=self.steps_per_second, candidate_count=3,
-            )
-            if route is None or len(route) > 1:
-                break
-            duration += float(task.get("duration", 1.0))
-            done.add(task["id"])
-            if task["action"] == "place":
-                target = predicted[task["target"]]
-                predicted[task["object"]]["cells"] = frozenset({target["cell"]})
-        return duration
-
     def _choose_service_wait_or_reroute(self, cluster):
         """Optimize a finite candidate set at service-state decision events."""
         signature = tuple(
@@ -909,21 +820,16 @@ class GridSimulation(GridRenderer):
             negotiation_selector=(negotiation.make_selector(
                 self.robots, self.negotiation_state, self.steps_per_second, set(key))
                 if self.selection_policy == "negotiation_adapted" else None),
-            anticipated_delay_horizon=(getattr(self,"anticipated_delay_horizon",5.)
-                if self.selection_policy=="dag_aware" and getattr(self,"use_anticipated_delays",False)
-                else None),
             preserve_priority_corridor=getattr(self,"preserve_priority_corridor",True),
             dag_candidate_refiner=(
                 _make_release_refiner(self.robots,self.tasks,self.task_status,
                     self.objects,self.world.navigation_cells,self.world.robot_radius,self.world.grid_size,
                     self.steps_per_second,set(key),getattr(self,"release_prediction_model","dynamic_events_guarded"),
                     getattr(self,"anticipated_delay_horizon",5.),
-
                     hypothesis_workers=getattr(self,"hypothesis_workers",1)) if self.selection_policy=="dag_aware"
                     and getattr(self,"use_release_prediction",True)
                     and not getattr(self,"_release_prediction_disabled",False)
                     and getattr(self,"preserve_priority_corridor",True)
-                    and not getattr(self,"use_anticipated_delays",False)
                     else None
             ),
             use_dag_priority=getattr(self, "use_dag_priority", True),
@@ -1047,11 +953,6 @@ class GridSimulation(GridRenderer):
                 if robot.current_task is not None
                 and robot.phase in {"preview", "moving", "waiting"}
             ]
-            free_agents = [
-                robot
-                for robot in cluster
-                if robot.current_task is None and robot.phase == "idle"
-            ]
             if not workers:
                 continue
             if not getattr(self, "async_conflict_planning", False):
@@ -1085,7 +986,6 @@ class GridSimulation(GridRenderer):
                     self, "incremental_dag_evaluation", True
                 ),
 
-                use_anticipated_delays=getattr(self, "use_anticipated_delays", False),
                 anticipated_delay_horizon=getattr(self, "anticipated_delay_horizon", 5.),
                 preserve_priority_corridor=getattr(self, "preserve_priority_corridor", True),
                 use_release_prediction=(getattr(self, "use_release_prediction", True)
@@ -1233,8 +1133,6 @@ class GridSimulation(GridRenderer):
         if mover.phase == "acting":
             mover.interrupted_action_remaining = mover.action_remaining
         mover.phase = "parking"
-        mover.clearing_for = tuple(step["protects"])
-        mover.clearing_started = False
         print(
             f"C{resolution_id} relocation "
             f"{index + 1}/{len(resolution['steps'])}: "
@@ -1249,8 +1147,6 @@ class GridSimulation(GridRenderer):
         mover.goal = None
         mover.phase = "waiting" if mover.current_task is not None else "idle"
         mover.waiting_for = None
-        mover.clearing_for = ()
-        mover.clearing_started = False
         resolution["index"] += 1
         self._start_next_resolution_step(resolution_id)
 
@@ -1278,8 +1174,6 @@ class GridSimulation(GridRenderer):
         robot.path_index = 0
         robot.goal = None
         robot.waiting_for = None
-        robot.clearing_for = ()
-        robot.clearing_started = False
         if robot.current_task is None:
             robot.phase = "idle"
         else:
@@ -1570,10 +1464,6 @@ class GridSimulation(GridRenderer):
                     # opens a new optimization in which that idle robot can be
                     # relocated, instead of committing to a global detour.
                     route = nominal
-                lookahead_cells = max(
-                    2.0 * clearance_cells,
-                    self.steps_per_second,
-                )
                 if self._is_navigating(priority):
                     if not continuation_motion_is_clear(
                         self._remaining_path(priority), route,
@@ -1616,10 +1506,6 @@ class GridSimulation(GridRenderer):
             )
         if completed:
             self._start_ready_tasks()
-
-    def start_execution(self):
-        """Compatibility entry point; execution now starts automatically."""
-        self._start_ready_tasks()
 
     def _begin_action(self, robot):
         task = robot.current_task
@@ -1782,7 +1668,13 @@ class GridSimulation(GridRenderer):
                 for robot in self.robots
                 if self._is_navigating(robot)
             }
-        allowed = set(proposals)
+        # Do not accumulate/display progress along an unsafe edge and then
+        # snap back when its commit is rejected. Held robots are stationary.
+        allowed = self._safe_motion_ids(proposals, set(proposals))
+        for robot in self.robots:
+            if robot.robot_id not in allowed:
+                robot.movement_credit = 0.0
+                robot.movement_edge = None
         for robot in self.robots:
             if robot.robot_id not in allowed:
                 continue
@@ -1794,29 +1686,13 @@ class GridSimulation(GridRenderer):
             if robot.movement_credit + 1e-9 < math.dist(*edge):
                 allowed.remove(robot.robot_id)
 
-        # Removing a move changes the trajectory seen by other robots; repeat
-        # until every accepted simultaneous segment respects body clearance.
-        clearance = 2.0 * self.world.robot_radius / self.world.grid_size
-        while True:
-            blocked = set()
-            for index, first in enumerate(self.robots):
-                for second in self.robots[index + 1:]:
-                    a = proposals[first.robot_id] if first.robot_id in allowed else first.cell
-                    b = proposals[second.robot_id] if second.robot_id in allowed else second.cell
-                    minimum = swept_separation(first.cell, a, second.cell, b)
-                    initial = math.dist(first.cell, second.cell)
-                    # Legacy worlds may start touching: permit separation only.
-                    safe = minimum >= clearance - 1e-9
-                    if initial < clearance:
-                        safe = minimum >= initial - 1e-9 and math.dist(a, b) > initial + 1e-9
-                    if not safe:
-                        blocked.update({first.robot_id, second.robot_id} & allowed)
-            if not blocked:
-                break
-            for robot in self.robots:
-                if robot.robot_id in blocked:
-                    robot.movement_credit = 0.0
-            allowed.difference_update(blocked)
+        # Some edges are not ready yet; recheck with those robots stationary.
+        ready = self._safe_motion_ids(proposals, allowed)
+        for robot in self.robots:
+            if robot.robot_id in allowed - ready:
+                robot.movement_credit = 0.0
+                robot.movement_edge = None
+        allowed = ready
 
         arrived = []
         for robot in self.robots:
@@ -1835,9 +1711,7 @@ class GridSimulation(GridRenderer):
                 if not matches:
                     # An asynchronous plan can be merged/cancelled in the
                     # same tick that its mover reaches the committed parking
-                    # endpoint.  The physical move is already safe and must
-                    # not be rolled back; restore the robot from the observed
-                    # endpoint and let the normal detector replan next tick.
+                    # endpoint. Restore it from the observed endpoint.
                     self._recover_orphaned_parking(robot)
                     continue
                 if len(matches) != 1:
@@ -1846,6 +1720,43 @@ class GridSimulation(GridRenderer):
             else:
                 self._begin_action(robot)
         self._release_separated_reroutes()
+
+    def _safe_motion_ids(self, proposals, allowed):
+        """Remove unsafe simultaneous edges, including newly stationary blockers."""
+        allowed = set(allowed)
+        clearance = 2.0 * self.world.robot_radius / self.world.grid_size
+        while True:
+            blocked = set()
+            for index, first in enumerate(self.robots):
+                for second in self.robots[index + 1:]:
+                    a = proposals[first.robot_id] if first.robot_id in allowed else first.cell
+                    b = proposals[second.robot_id] if second.robot_id in allowed else second.cell
+                    minimum = swept_separation(first.cell, a, second.cell, b)
+                    initial = math.dist(first.cell, second.cell)
+                    # Legacy worlds may start touching: permit separation only.
+                    safe = minimum >= clearance - 1e-9
+                    if initial < clearance:
+                        safe = minimum >= initial - 1e-9 and math.dist(a, b) > initial + 1e-9
+                    if not safe:
+                        moving = {first.robot_id, second.robot_id} & allowed
+                        # A retreat may be safe while the released priority
+                        # robot is not yet allowed to advance. Stopping both
+                        # would prevent the retreat from ever clearing space.
+                        solo_unsafe = set()
+                        for robot, endpoint, other in ((first, a, second), (second, b, first)):
+                            if robot.robot_id not in moving:
+                                continue
+                            solo_min = swept_separation(robot.cell, endpoint, other.cell, other.cell)
+                            solo_safe = solo_min >= clearance - 1e-9
+                            if initial < clearance:
+                                solo_safe = solo_min >= initial - 1e-9 and math.dist(endpoint, other.cell) > initial + 1e-9
+                            if not solo_safe:
+                                solo_unsafe.add(robot.robot_id)
+                        blocked.update(solo_unsafe or moving)
+            if not blocked:
+                break
+            allowed.difference_update(blocked)
+        return allowed
 
     def _commit_navigation_edge(self, robot, next_cell, next_index):
         """Commit an already safety-checked edge (also used by fixed-plan execution)."""
@@ -1860,8 +1771,7 @@ class GridSimulation(GridRenderer):
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
         cv2.resizeWindow(WINDOW_NAME, self.width, self.height)
         cv2.setMouseCallback(WINDOW_NAME, self._on_mouse)
-        last_step = time.monotonic()
-        last_frame = last_step
+        last_frame = time.monotonic()
         try:
             while True:
                 now = time.monotonic()
@@ -1874,7 +1784,10 @@ class GridSimulation(GridRenderer):
                         self.step(dt)
                         remaining -= dt
                 cv2.imshow(WINDOW_NAME, self._draw())
-                key = cv2.waitKey(1) & 0xFF
+                # Keep visualization near 60 FPS instead of busy-spinning;
+                # simulation time still follows the actual elapsed wall time.
+                frame_ms = max(1, round(1000/60 - (time.monotonic()-now)*1000))
+                key = cv2.waitKey(frame_ms) & 0xFF
                 if key in (27, ord("q")):
                     return
                 if key == ord(" "):

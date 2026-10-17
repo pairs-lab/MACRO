@@ -20,7 +20,7 @@ from simulations.ros2.map_adapter import PlannerSession, clean
 from simulations.grid.app import GridSimulation
 from simulations.grid.world import load_world
 from core.coordination.planner import astar, shortest_path_tree_to_any, path_length
-from simulations.ros2.marco_geometry import corridor_clear, corridor_distance
+from simulations.ros2.marco_geometry import corridor_clear
 from simulations.grid.app import _compute_conflict_plan
 from simulations.ros2.three_robot_t.execution_prediction import load_profile, action_contract, digest, predict
 

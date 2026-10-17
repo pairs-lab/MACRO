@@ -24,10 +24,6 @@ ROBOT_CAPABILITIES = {
     for index in range(AGENT_COUNT)
 }
 
-ROBOT_TO_SIMULATION_NAME = {
-    f"R{index + 1}": f"robot{index + 1}" for index in range(AGENT_COUNT)
-}
-
 ACTION_REQUIREMENTS = {
     action: frozenset({action}) for action in FULL_CAPABILITIES
 }
@@ -112,14 +108,6 @@ def add_candidate_robots(
 def get_task_candidates(task_file=DEFAULT_TASK_FILE) -> list[dict]:
     """Load tasks and return candidate robots for every task."""
     return add_candidate_robots(load_tasks(task_file))
-
-
-def to_simulation_robot_name(robot_id: str) -> str:
-    """Translate an R1..RN scheduler ID into robot1..robotN."""
-    try:
-        return ROBOT_TO_SIMULATION_NAME[robot_id]
-    except KeyError as error:
-        raise ValueError(f"Unknown robot: {robot_id!r}") from error
 
 
 def main() -> None:

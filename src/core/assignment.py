@@ -399,137 +399,6 @@ def _assignment_search_metadata(tasks: list[dict], service_time) -> dict:
     }
 
 
-def _assignment_lower_bound(
-    ordered_tasks: list[dict],
-    partial_assignment: dict[int, str],
-    service_durations: dict[int, dict[str, float]],
-    *,
-    robot_speed=1.0,
-    task_positions: dict[int, tuple] | None = None,
-    initial_positions: dict[str, tuple] | None = None,
-    chain_predecessors: dict[int, int] | None = None,
-    distance_scale: float = 1.0,
-) -> tuple[float, float]:
-    """Return admissible ``(makespan, travel-distance)`` lower bounds.
-
-    Spatial terms use straight-line distances only. The precedence bound
-    charges navigation only where chain construction guarantees it: from a
-    source robot pose into a source task, or between adjacent tasks in one
-    handoff-free chain. The committed-workload bound additionally connects
-    assigned tasks in stable topological order. Taking maxima of independently
-    admissible bounds avoids double-counting. Missing geometry contributes
-    zero rather than a fabricated path cost.
-    """
-    task_positions = task_positions or {}
-    initial_positions = initial_positions or {}
-    chain_predecessors = chain_predecessors or {}
-
-    def set_distance(first_points, second_points):
-        if not first_points or not second_points:
-            return 0.0
-        try:
-            return min(
-                math.dist(first, second) * distance_scale
-                for first in first_points
-                for second in second_points
-            )
-        except (TypeError, ValueError):
-            return 0.0
-
-    def guaranteed_navigation(task, robot):
-        task_id = task["id"]
-        destination = task_positions.get(task_id, ())
-        predecessor = chain_predecessors.get(task_id)
-        if predecessor is not None:
-            return set_distance(task_positions.get(predecessor, ()), destination)
-        if task.get("node"):
-            return 0.0
-        return set_distance(initial_positions.get(robot, ()), destination)
-
-    finish_times = {}
-    assigned_service = {}
-    assigned_tasks = {}
-    guaranteed_distances = []
-    for task in ordered_tasks:
-        task_id = task["id"]
-        assigned_robot = partial_assignment.get(task_id)
-        candidate_robots = (
-            (assigned_robot,)
-            if assigned_robot is not None
-            else tuple(service_durations[task_id])
-        )
-        duration = min(
-            service_durations[task_id][robot]
-            + guaranteed_navigation(task, robot)
-            / _robot_value(robot_speed, robot, "robot_speed")
-            for robot in candidate_robots
-        )
-        dependency_finish = max(
-            (finish_times[predecessor] for predecessor in task["node"]),
-            default=0.0,
-        )
-        finish_times[task_id] = dependency_finish + duration
-        if assigned_robot is not None:
-            assigned_service[assigned_robot] = (
-                assigned_service.get(assigned_robot, 0.0)
-                + service_durations[task_id][assigned_robot]
-            )
-            assigned_tasks.setdefault(assigned_robot, []).append(task_id)
-        predecessor = chain_predecessors.get(task_id)
-        if predecessor is not None:
-            guaranteed_distances.append(
-                set_distance(
-                    task_positions.get(predecessor, ()),
-                    task_positions.get(task_id, ()),
-                )
-            )
-
-    assigned_distance = {}
-    for robot, assigned_task_ids in assigned_tasks.items():
-        previous_points = initial_positions.get(robot, ())
-        travel = 0.0
-        for task_id in assigned_task_ids:
-            current_points = task_positions.get(task_id, ())
-            travel += set_distance(previous_points, current_points)
-            if current_points:
-                previous_points = current_points
-        assigned_distance[robot] = travel
-
-    source_distance = max(
-        (
-            min(
-                set_distance(
-                    initial_positions.get(robot, ()),
-                    task_positions.get(task["id"], ()),
-                )
-                for robot in task["candidate"]
-            )
-            for task in ordered_tasks
-            if not task.get("node")
-        ),
-        default=0.0,
-    )
-    distance_bound = max(
-        max(guaranteed_distances, default=0.0),
-        sum(assigned_distance.values()),
-        source_distance,
-    )
-    workload_bound = max(
-        (
-            assigned_service[robot]
-            + assigned_distance.get(robot, 0.0)
-            / _robot_value(robot_speed, robot, "robot_speed")
-            for robot in assigned_service
-        ),
-        default=0.0,
-    )
-    makespan_bound = max(
-        max(finish_times.values(), default=0.0),
-        workload_bound,
-    )
-    return makespan_bound, distance_bound
-
-
 def _chain_object_names(chain: dict) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
@@ -578,10 +447,15 @@ def _coalesce_owner_chains(metadata):
 
 
 def _prepare_assignment_bound(metadata, geometry, robot_speed, chain_predecessors):
-    """Compile the existing admissible bound's immutable geometry/durations.
+    """Compile admissible ``(makespan, travel-distance)`` lower bounds.
 
-    This computes the same bound as _assignment_lower_bound, without repeated
-    point-set distance minimizations and robot parameter validation per node.
+    Spatial terms use straight-line distances only. The precedence bound
+    charges navigation only where chain construction guarantees it: from a
+    source robot pose into a source task, or between adjacent tasks in one
+    handoff-free chain. The committed-workload bound additionally connects
+    assigned tasks in stable topological order. Taking maxima of independently
+    admissible bounds avoids double-counting. Geometry and durations are
+    compiled once instead of per search node.
     """
     tasks = metadata["ordered_tasks"]
     positions = geometry.get("task_positions", {})

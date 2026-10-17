@@ -1,0 +1,17 @@
+{
+  "base_world": "map.json",
+  "description": "Same T-junction and side-exchange goals, with reversed station-service durations.",
+  "robots": [
+    {"id": "R1", "start_cell": [-3, 0], "color_bgr": [230, 100, 20]},
+    {"id": "R2", "start_cell": [3, 0], "color_bgr": [30, 140, 240]},
+    {"id": "R3", "start_cell": [0, -1], "color_bgr": [80, 170, 60]}
+  ],
+  "objects": [
+    {"name": "right_station", "cell": [5, 0], "interaction_cells": [[5, 0]], "radius_cells": 0.16, "blocking": false},
+    {"name": "left_station", "cell": [-5, 0], "interaction_cells": [[-5, 0]], "radius_cells": 0.16, "blocking": false}
+  ],
+  "tasks": [
+    {"id": 1, "candidate": ["R1"], "action": "open", "object": "right_station", "duration": 1.0, "node": []},
+    {"id": 2, "candidate": ["R2"], "action": "open", "object": "left_station", "duration": 8.0, "node": []}
+  ]
+}

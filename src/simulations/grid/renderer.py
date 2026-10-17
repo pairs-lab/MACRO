@@ -5,6 +5,22 @@ import numpy as np
 
 
 class GridRenderer:
+    @staticmethod
+    def _robot_display_cell(robot):
+        """Interpolate edge progress for display only; never change grid state.
+
+        The executor remains authoritative for discrete cell commits, swept
+        collision checks and release gates. This is not continuous physics.
+        """
+        edge = getattr(robot, 'movement_edge', None)
+        if edge is None or tuple(edge[0]) != tuple(robot.cell):
+            return robot.cell
+        length = math.dist(*edge)
+        if length <= 1e-12:
+            return robot.cell
+        fraction = min(1., max(0., getattr(robot, 'movement_credit', 0.) / length))
+        return tuple(a + fraction*(b-a) for a, b in zip(*edge))
+
     def _pixel(self, cell):
         min_x, _, _, max_z = self.bounds
         return (
@@ -170,13 +186,15 @@ class GridRenderer:
             int(self.world.robot_radius / self.world.grid_size * self.scale),
         )
         for robot in self.robots:
+            display_cell = self._robot_display_cell(robot)
             if (
                 self.show_paths
                 and (self._is_navigating(robot) or robot.phase == "preview")
                 and robot.path_index < len(robot.path) - 1
             ):
                 pixels = np.array(
-                    [self._pixel(cell) for cell in robot.path[robot.path_index:]],
+                    [self._pixel(display_cell)] +
+                    [self._pixel(cell) for cell in robot.path[robot.path_index + 1:]],
                     dtype=np.int32,
                 )
                 if robot.phase == "preview":
@@ -190,7 +208,7 @@ class GridRenderer:
                         2,
                         cv2.LINE_AA,
                     )
-            centre = self._pixel(robot.cell)
+            centre = self._pixel(display_cell)
             cv2.circle(frame, centre, radius, robot.color, -1, cv2.LINE_AA)
             cv2.circle(frame, centre, radius, (10, 10, 10), 2, cv2.LINE_AA)
             cv2.putText(

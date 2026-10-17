@@ -96,20 +96,3 @@ def route_position(route, distance):
     return route[-1]
 
 
-def anticipated_conflict(poses, paths, speed=.16, horizon=3., dt=.1):
-    """Two-robot demo: equal-speed route preview with continuous swept steps.
-
-    This is an imminent-conflict trigger, not MARCO's candidate-conditioned
-    mission prediction. ROS tracking can depart from this nominal preview.
-    """
-    robots = ['tb1', 'tb2']
-    if any(r not in poses or not paths.get(r) for r in robots):
-        return False
-    routes = [remaining_route(poses[r], paths[r][-1]) for r in robots]
-    before = [route_position(route, 0.) for route in routes]
-    for i in range(1, math.ceil(horizon / dt) + 1):
-        after = [route_position(route, speed * min(i * dt, horizon)) for route in routes]
-        if swept_separation(before[0], after[0], before[1], after[1]) <= 2 * ROBOT_RADIUS:
-            return True
-        before = after
-    return False

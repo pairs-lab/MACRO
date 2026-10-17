@@ -24,11 +24,6 @@ env/
 /benchmarks/
 /experiments/
 /docs/
-/tests/local/
-/tests/test_component_ablation.py
-/tests/test_candidate_ranking_audit.py
-/tests/test_censored_prediction_policy.py
-/tests/test_anticipated_delay.py
 /plot.py
 /run.sh
 /.agents/

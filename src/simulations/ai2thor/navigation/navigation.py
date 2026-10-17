@@ -18,7 +18,6 @@ from simulations.ai2thor.config import (
     interaction_distance_for,
     ONLINE_MAX_YIELDS_PER_NAVIGATION,
     SMOOTH_NAVIGATION_ENABLED,
-    SMOOTH_SAMPLE_SPACING,
     carried_object_safety_margin,
 )
 from simulations.ai2thor.controller import require_success

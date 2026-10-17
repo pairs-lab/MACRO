@@ -73,7 +73,6 @@ def compute_conflict_plan(
     diagnostics=None,
     use_dag_priority=True,
     incremental_dag_evaluation=True,
-    use_anticipated_delays=False,
     anticipated_delay_horizon=5.,
     preserve_priority_corridor=True,
     use_release_prediction=True,
@@ -98,11 +97,6 @@ def compute_conflict_plan(
         for robot in cluster
         if robot.current_task is not None
         and robot.phase in {"preview", "moving", "waiting"}
-    ]
-    free_agents = [
-        robot
-        for robot in cluster
-        if robot.current_task is None and robot.phase == "idle"
     ]
     if not workers:
         if selection_policy == "reroute_only":
@@ -216,10 +210,8 @@ def compute_conflict_plan(
                 anticipated_delay_horizon,
                 hypothesis_workers=hypothesis_workers)
             if selection_policy == "dag_aware" and use_release_prediction
-                and preserve_priority_corridor and not use_anticipated_delays else None
+                and preserve_priority_corridor else None
         ),
-        anticipated_delay_horizon=(anticipated_delay_horizon
-                                  if selection_policy == "dag_aware" and use_anticipated_delays else None),
         preserve_priority_corridor=preserve_priority_corridor,
         negotiation_selector=(negotiation.make_selector(
             dag_robots, negotiation_state, speed_cells_per_second, cluster_ids)

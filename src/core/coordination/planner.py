@@ -499,16 +499,6 @@ def shortest_path_distances(free_cells, start, *, dynamic_obstacles=()):
     return costs
 
 
-def circular_obstacle(centre, radius_cells):
-    radius = int(math.ceil(radius_cells))
-    return {
-        (centre[0] + dx, centre[1] + dz)
-        for dx in range(-radius, radius + 1)
-        for dz in range(-radius, radius + 1)
-        if math.hypot(dx, dz) < radius_cells
-    }
-
-
 def _interaction_goals(free_cells, object_cells, slack_cells=2.0):
     """Return nearby poses while allowing a slightly better approach side."""
     targets = tuple(object_cells)
@@ -524,18 +514,6 @@ def _interaction_goals(free_cells, object_cells, slack_cells=2.0):
         for cell, distance in distances.items()
         if distance <= minimum_distance + float(slack_cells)
     }
-
-
-def plan_to_object(free_cells, start, object_cells):
-    """Return the shortest route to any valid nearby interaction pose."""
-    goals = _interaction_goals(free_cells, object_cells)
-    paths = shortest_paths_to_any(
-        free_cells,
-        start,
-        goals,
-        path_count=1,
-    )
-    return paths[0] if paths else None
 
 
 @_memoized_geometry

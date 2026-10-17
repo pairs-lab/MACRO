@@ -1,0 +1,16 @@
+{
+  "description": "Map 5: single-lane T-junction, 0.50 m aisle, 0.46 m robot diameter.",
+  "grid_size": 0.5,
+  "robot_radius": 0.23,
+  "free_spans": {
+    "-5": [[0, 0]],
+    "-4": [[0, 0]],
+    "-3": [[0, 0]],
+    "-2": [[0, 0]],
+    "-1": [[0, 0]],
+    "0": [[-5, 5]]
+  },
+  "robots": [],
+  "objects": [],
+  "tasks": []
+}
