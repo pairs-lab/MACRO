@@ -144,7 +144,7 @@
       ],
       "action": "toggle_on",
       "object": "sink",
-      "duration": 1,
+      "duration": 2,
       "node": [
         4
       ]
@@ -170,7 +170,7 @@
       ],
       "action": "wash",
       "object": "tomato",
-      "duration": 1,
+      "duration": 2,
       "node": [
         6
       ]
@@ -197,7 +197,7 @@
       ],
       "action": "toggle_off",
       "object": "sink",
-      "duration": 1,
+      "duration": 2,
       "node": [
         8
       ]

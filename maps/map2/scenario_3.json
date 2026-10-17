@@ -133,7 +133,7 @@
       ],
       "action": "toggle_on",
       "object": "sink",
-      "duration": 1.0,
+      "duration": 2,
       "node": [
         2
       ]
@@ -159,7 +159,7 @@
       ],
       "action": "wash",
       "object": "garbage",
-      "duration": 1.0,
+      "duration": 2,
       "node": [
         4
       ]
@@ -186,7 +186,7 @@
       ],
       "action": "toggle_off",
       "object": "sink",
-      "duration": 1.0,
+      "duration": 2,
       "node": [
         6
       ]

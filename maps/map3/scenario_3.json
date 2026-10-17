@@ -90,10 +90,10 @@
     {"id": 2, "candidate": ["R1", "R2"], "action": "place", "object": "apple", "target": "bowl", "duration": 1.0, "node": [1]},
     {"id": 3, "candidate": ["R1", "R2"], "action": "pick", "object": "tomato", "duration": 1.0, "node": []},
     {"id": 4, "candidate": ["R1", "R2"], "action": "place", "object": "tomato", "target": "sink", "duration": 1.0, "node": [3]},
-    {"id": 5, "candidate": ["R1", "R2"], "action": "toggle_on", "object": "sink", "duration": 1.0, "node": [4]},
+    {"id": 5, "candidate": ["R1", "R2"], "action": "toggle_on", "object": "sink", "duration": 2, "node": [4]},
     {"id": 6, "candidate": ["R1", "R2"], "action": "pick", "object": "tomato", "duration": 1.0, "node": [5]},
-    {"id": 7, "candidate": ["R1", "R2"], "action": "wash", "object": "tomato", "target": "sink", "duration": 1.0, "node": [6]},
+    {"id": 7, "candidate": ["R1", "R2"], "action": "wash", "object": "tomato", "target": "sink", "duration": 2, "node": [6]},
     {"id": 8, "candidate": ["R1", "R2"], "action": "place", "object": "tomato", "target": "sink", "duration": 1.0, "node": [7]},
-    {"id": 9, "candidate": ["R1", "R2"], "action": "toggle_off", "object": "sink", "duration": 1.0, "node": [8]}
+    {"id": 9, "candidate": ["R1", "R2"], "action": "toggle_off", "object": "sink", "duration": 2, "node": [8]}
   ]
 }
