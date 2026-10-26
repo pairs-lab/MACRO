@@ -25,6 +25,42 @@ If ROS is already sourced, omit `MARCO_ROS_SETUP`. ROS nodes run with system Pyt
 
 Outputs are written to ignored `results/ros2/run_*/`, including actual launch parameters, selected intervention contracts and execution logs. The saved map under `three_robot_t/measured_images/` is the AMCL input; `prepare_map.py` converts that same map to planning occupancy at startup. This launcher does not run a new SLAM scan.
 
+## TurtleBot 4 (Ignition Gazebo, no charging dock)
+
+`run_ros2_tb4.sh` runs the same T-junction scenario, Nav2/AMCL setup, MARCO planner and executor with three TurtleBot 4
+(Create 3) robots in Ignition Gazebo. No dock is spawned.
+
+Prerequisites: ROS 2 Humble with a TurtleBot 4 simulator environment (`turtlebot4_ignition_bringup`, `irobot_create_*`,
+`nav2_bringup`, `nav2_simple_commander`), reachable through the `environment.sh` of a TurtleBot 4 workspace.
+
+```bash
+export MARCO_TB4_WORKSPACE=/path/to/turtlebot4/workspace   # contains environment.sh
+export MARCO_PYTHON=/path/to/python/environment/bin/python  # numpy + native modules (planning worker)
+bash run_ros2_tb4.sh
+```
+
+`MARCO_TB4_HEADLESS=false` additionally opens the Ignition window; `MARCO_TB4_MODEL=standard` selects the standard model.
+
+What differs from the TurtleBot 3 run, and why:
+
+- `tb4/worlds/three_robot_t.sdf`: the same walls as `three_robot_t.world`, with the Ignition Sensors system declared once.
+- `tb4/make_robot_description.py`: the official TurtleBot 4 description without its per-robot Sensors/Contact plugins
+  (several robots with one each crash Ignition) and without the cliff/IR/camera render sensors. RPLIDAR, wheel odometry,
+  IMU, bumper contact and the diff-drive controller remain.
+- `tb4/launch/tb4_robot.launch.py`: robot_state_publisher, entity, the two ros2_control spawners and two frame aliases per
+  robot. The official bringup starts about 65 processes per robot (one ros_gz bridge per topic); three robots saturated a
+  20-thread laptop (load average above 200). The scan and clock are bridged once (`tb4_world.launch.py`) and
+  `tb4/cmd_vel_relay.py` forwards `/tbN/cmd_vel` to the diff-drive controller.
+- `tb4/cyclonedds_tb4.xml`: more CycloneDDS participants than the default 100.
+- Base frame `base_link` (`MARCO_BASE_FRAME`), round 0.185 m footprint, wheel radius/separation/acceleration read from
+  `irobot_create_control/config/control.yaml` for the timing prediction (`MARCO_ROBOT=tb4`).
+- `tb4/launch/tb4_scenario.launch.py` adapts `nav2_tb1.yaml` and reuses `marco_controllers.py` (the shared controller profile).
+
+Execution (both robots): an action starts when its route is disjoint from the remaining routes of earlier unfinished
+actions of other robots, and the prediction (`schedule_staging`) uses the same rule; R3 enters the pocket in one smooth
+path (`DEMO_R3_ENTRY=two_stage` restores the stop at the mouth). Bounded recoveries (pose corrections, progress
+watchdog, DWB retries) are recorded in `prediction_contract_deviations`.
+
 ## Module boundaries
 
 - `map_adapter.py`: occupancy-to-grid input and static geometry caching.

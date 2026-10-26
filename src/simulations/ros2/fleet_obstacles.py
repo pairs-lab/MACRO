@@ -3,11 +3,14 @@ import copy
 import math
 import os
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseWithCovarianceStamped
+
+circle=float(os.environ['FLEET_FOOTPRINT_RADIUS']) if os.environ.get('FLEET_FOOTPRINT_RADIUS') else None
 
 class FleetObstacles(Node):
     def __init__(self):
@@ -38,11 +41,16 @@ class FleetObstacles(Node):
                         dx,dy=ox+(col+.5)*res-x,oy+(row+.5)*res-y
                         u,v=c*dx+s*dy,-s*dx+c*dy
                         # Half-cell raster padding encloses boundary cells.
-                        if -.207-res/2<=u<=.079+res/2 and abs(v)<=.164+res/2:
+                        if circle is not None:
+                            if dx*dx+dy*dy<=(circle+res/2)**2:message.data[row*w+col]=100
+                        elif -.207-res/2<=u<=.079+res/2 and abs(v)<=.164+res/2:
                             message.data[row*w+col]=100
             self.pubs[own].publish(message)
 
 if __name__=='__main__':
     rclpy.init();node=FleetObstacles()
     try:rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):pass  # launch teardown is a normal stop
+    except Exception:
+        if rclpy.ok():raise  # an error while the context is still valid is real; after teardown it is not
     finally:node.destroy_node();rclpy.try_shutdown()

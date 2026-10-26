@@ -1,5 +1,6 @@
 """Observed ROS robot state, motor holds and planned-path visualization."""
 import math
+import os
 import time
 from rclpy.parameter import Parameter
 from rclpy.node import Node
@@ -9,6 +10,8 @@ from nav_msgs.msg import Path as RosPath, Odometry
 from tf2_msgs.msg import TFMessage
 from tf2_ros import Buffer
 from rclpy.time import Time
+
+BASE_FRAME=os.environ.get('MARCO_BASE_FRAME','base_footprint')
 
 def pose(x,y,yaw=0.):
     p=PoseStamped();p.header.frame_id='map';p.pose.position.x=float(x);p.pose.position.y=float(y)
@@ -34,16 +37,21 @@ class Audit(Node):
                 lambda m,r=robot:self.odometry(r,m),10))
             self.subs.append(self.create_subscription(TFMessage,f'/{robot}/tf',
                 lambda m,r=robot:self.transforms(r,m),100))
+            # several publishers (robot_state_publisher, frame aliases) each latch their own static transforms:
+            # a depth-1 reader would keep only one of them, so use the same depth as tf2_ros
             self.subs.append(self.create_subscription(TFMessage,f'/{robot}/tf_static',
                 lambda m,r=robot:self.transforms(r,m,True),
-                QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL)))
+                QoSProfile(depth=100,durability=DurabilityPolicy.TRANSIENT_LOCAL)))
             self.subs.append(self.create_subscription(RosPath,f'/{robot}/plan',
                 lambda m,r=robot:self.paths.setdefault(r,[]).append(
                     [[p.pose.position.x,p.pose.position.y] for p in m.poses]),10))
             for stage in ['clearance','resume']:
                 self.pubs[robot,stage]=self.create_publisher(RosPath,f'/{robot}/marco_{stage}',
                     QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.shown={}
         self.create_timer(.05,self.hold_commands)
+        if os.environ.get('DEMO_CLEAN_VIEW'):
+            self.create_timer(.1,self.trim_paths)
     def hold_commands(self):
         # A cancelled action is not a motor hold. Measured residual yaw motion
         # can remain with zero wheel commands in this Gazebo model. Apply a
@@ -74,7 +82,7 @@ class Audit(Node):
             if static:buffer.set_transform_static(transform,'fleet_adapter')
             else:buffer.set_transform(transform,'fleet_adapter')
         try:
-            transform=buffer.lookup_transform('map','base_footprint',Time())
+            transform=buffer.lookup_transform('map',BASE_FRAME,Time())
         except Exception:
             return
         p,q=transform.transform.translation,transform.transform.rotation
@@ -82,7 +90,29 @@ class Audit(Node):
         self.pose_times[r]=time.monotonic()
     def pump(self):
         time.sleep(.02)  # Dedicated executor receives both robots independently.
+    def trim_paths(self):
+        """Paper view: draw only the part of each MARCO path that is still ahead of the robot (the driven part is erased)."""
+        for key,entry in list(self.shown.items()):
+            r,stage=key;pos=self.poses.get(r)
+            if pos is None:continue
+            path=entry['path'];i=entry['index']
+            while i+1<len(path) and math.dist(pos[:2],path[i+1])<=math.dist(pos[:2],path[i]):i+=1
+            if math.dist(pos[:2],path[-1])<.10:
+                self.pubs[r,stage].publish(self._message([]));self.shown.pop(key);continue
+            if i!=entry['index'] or not entry['trimmed']:
+                entry['index']=i;entry['trimmed']=True
+                self.pubs[r,stage].publish(self._message([pos[:2]]+path[i+1:]))
+    def _message(self,path):
+        message=RosPath();message.header.frame_id='map';message.header.stamp=self.get_clock().now().to_msg()
+        for i,(x,y) in enumerate(path):
+            nxt=path[min(i+1,len(path)-1)]
+            direction=(nxt[0]-x,nxt[1]-y)
+            if i==len(path)-1 and i>0:
+                direction=(x-path[i-1][0],y-path[i-1][1])
+            p=pose(x,y,math.atan2(direction[1],direction[0]));p.header=message.header;message.poses.append(p)
+        return message
     def publish(self,r,stage,path):
+        if os.environ.get('DEMO_CLEAN_VIEW'):self.shown[r,stage]=dict(path=[list(p) for p in path],index=0,trimmed=False)
         message=RosPath();message.header.frame_id='map';message.header.stamp=self.get_clock().now().to_msg()
         for i,(x,y) in enumerate(path):
             nxt=path[min(i+1,len(path)-1)]

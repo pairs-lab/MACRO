@@ -25,7 +25,26 @@ from simulations.grid.app import _compute_conflict_plan
 from simulations.ros2.three_robot_t.execution_prediction import load_profile, action_contract, digest, predict
 
 
-def adapt_candidate(abstract,sim,poses,res,goal_adjustments,turn_safe):
+def smooth_south_entry(start,target,res):
+    """Cubic curve leaving ``start`` southward and arriving southward at ``target`` (about one cell between points)."""
+    (x0,y0),(x1,y1)=start,target
+    drop=abs(y1-y0)
+    if y1>=y0 or drop<1:return None
+    handle=.45*drop
+    p=[(x0,y0),(x0,y0-handle),(x1,y1+handle),(x1,y1)]
+    curve=[]
+    for i in range(201):
+        t=i/200;u=1-t
+        curve.append((u**3*p[0][0]+3*u*u*t*p[1][0]+3*u*t*t*p[2][0]+t**3*p[3][0],
+                      u**3*p[0][1]+3*u*u*t*p[1][1]+3*u*t*t*p[2][1]+t**3*p[3][1]))
+    route=[tuple(start)]
+    for c in curve[1:-1]:
+        if math_distance(c,route[-1])>=1.0:route.append(c)
+    route.append(tuple(target))
+    return route
+
+
+def adapt_candidate(abstract,sim,poses,res,goal_adjustments,turn_safe,geometry=None):
     if abstract.get('priority_robot') not in ('R1','R2') or not abstract.get('planned_paths'):
         raise RuntimeError('Candidate has no executable navigation priority/path contract')
     execution=deepcopy({k:abstract[k] for k in ('strategy','priority_robot','candidate_id',
@@ -33,6 +52,17 @@ def adapt_candidate(abstract,sim,poses,res,goal_adjustments,turn_safe):
     corridor_cells=abstract.get('protected_priority_corridor') or abstract['planned_paths'][abstract['priority_robot']]
     corridor=[[x*res,y*res] for x,y in corridor_cells]
     free=set(sim.world.navigation_cells)
+    # Corridor clearance depends only on (corridor, cell): reuse it across relocation steps and candidates
+    # that share a priority corridor (exactly the same sets, computed once per request).
+    geometry=geometry if geometry is not None else {}
+    corridor_key=tuple(map(tuple,corridor))
+    clear_of_corridor=geometry.get(('clear',corridor_key))
+    if clear_of_corridor is None:
+        clear_of_corridor=geometry[('clear',corridor_key)]={c for c in free if corridor_clear([c[0]*res,c[1]*res],corridor)}
+    def clear_with_margin(c,value):
+        key=('margin',corridor_key,value,c)
+        if key not in geometry:geometry[key]=corridor_clear([c[0]*res,c[1]*res],corridor,value)
+        return geometry[key]
     # Disc navigation clearance alone is insufficient for a rotating
     # rectangular Waffle. Buffer holding goals for all yaw orientations.
     margin=.10;reserve=.02
@@ -63,9 +93,9 @@ def adapt_candidate(abstract,sim,poses,res,goal_adjustments,turn_safe):
     for step in execution.get('relocation_sequence',[]):
         robot=step['robot_id'];endpoint=tuple(step['path'][-1])
         blocked=obstacles(robot)
-        outside={c for c in free if c not in blocked and corridor_clear([c[0]*res,c[1]*res],corridor)}
+        outside=clear_of_corridor-blocked
         goals={c for c in outside & turn_safe
-               if corridor_clear([c[0]*res,c[1]*res],corridor,margin+reserve)
+               if clear_with_margin(c,margin+reserve)
                and abs(c[0]*res)<=.25+1e-8
                # The idle support must clear the turning arc, not only
                # the straight protected passage. Reserve the deeper bay.
@@ -98,14 +128,21 @@ def adapt_candidate(abstract,sim,poses,res,goal_adjustments,turn_safe):
             refinements.append({'robot':robot,'staging_turn_arc':prefix,'radius_m':radius,
                                 'reverse':True,'entry_path':entry_path})
         elif robot=='R3' and positions[robot][1]*res>-.65:
-            # Leave the mouth in the existing southward heading before
-            # attempting a lateral turn near either waiting robot.
-            entry=(positions[robot][0],round(-.65/res))
-            entry_path=astar(free,positions[robot],entry,dynamic_obstacles=blocked)
-            route=astar(free,entry,target,dynamic_obstacles=blocked)
-            if not entry_path:raise RuntimeError('R3 cannot enter the lower pocket')
-            step['entry_path']=entry_path
-            refinements.append({'robot':robot,'southward_entry_path':entry_path})
+            # Leave the mouth in the existing southward heading before attempting a lateral turn near either
+            # waiting robot. A single curve tangent to that heading keeps the property without a stop at the mouth;
+            # if it is not collision-free (or DEMO_R3_ENTRY=two_stage) use the two-stage entry.
+            smooth=smooth_south_entry(positions[robot],target,res)
+            if os.environ.get('DEMO_R3_ENTRY','smooth')!='two_stage' and smooth and all(
+                    (round(c[0]),round(c[1])) in free and (round(c[0]),round(c[1])) not in blocked for c in smooth):
+                route=smooth
+                refinements.append({'robot':robot,'single_smooth_entry':True,'points':len(smooth)})
+            else:
+                entry=(positions[robot][0],round(-.65/res))
+                entry_path=astar(free,positions[robot],entry,dynamic_obstacles=blocked)
+                route=astar(free,entry,target,dynamic_obstacles=blocked)
+                if not entry_path:raise RuntimeError('R3 cannot enter the lower pocket')
+                step['entry_path']=entry_path
+                refinements.append({'robot':robot,'southward_entry_path':entry_path})
         else:route=astar(free,positions[robot],target,dynamic_obstacles=blocked)
         if not route:raise RuntimeError(f'Buffered staging blocked for {robot}')
         step.update(path=route,destination=target,distance=path_length(route,res))
@@ -195,7 +232,7 @@ def plan(session, request):
         offsets=[(x,y) for x in range(-extent,extent+1) for y in range(-extent,extent+1)
                  if (x*x+y*y)*res*res<=.30*.30]
         turn_safe={c for c in free if all((c[0]+x,c[1]+y) in raw_free for x,y in offsets)}
-        evaluations=[];executions={}
+        evaluations=[];executions={};geometry={}
         def evaluate(candidates,stats,deadline,baseline_finishes,baseline_distance):
             phase_start=time.perf_counter();ranked=[];cache={}
             for candidate in candidates:
@@ -204,7 +241,7 @@ def plan(session, request):
                 item={'candidate_id':candidate['candidate_id'],
                       'core_nominal_makespan_s':candidate['estimated_makespan']}
                 try:
-                    execution=adapt_candidate(candidate,sim,poses,res,goal_adjustments,turn_safe)
+                    execution=adapt_candidate(candidate,sim,poses,res,goal_adjustments,turn_safe,geometry)
                     contract=action_contract(execution,profile)
                     key=digest(contract)
                     prediction=cache.get(key)

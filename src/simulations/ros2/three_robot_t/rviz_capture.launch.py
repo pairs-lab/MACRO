@@ -10,6 +10,9 @@ from launch import LaunchDescription
 from launch.actions import ExecuteProcess, GroupAction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node, PushRosNamespace
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from marco_controllers import add_hybrid_controllers
 
 
 def generate_launch_description():
@@ -44,7 +47,19 @@ def generate_launch_description():
     displays.append({'Class':'rviz_default_plugins/MarkerArray','Name':'Conflict bounds (radius 0.25 m)',
                      'Enabled':True,'Value':True,'Topic':{'Value':'/marco/conflict_bounds',
                      'Depth':10,'Reliability Policy':'Reliable','Durability Policy':'Volatile'}})
-    config['Visualization Manager']['Views']['Current'].update(Scale=105., X=0., Y=-1.)
+    config['Visualization Manager']['Views']['Current'].update(Scale=float(os.environ.get('DEMO_RVIZ_SCALE','105')), X=0., Y=float(os.environ.get('DEMO_RVIZ_Y','-1')))
+    if os.environ.get('DEMO_CLEAN_VIEW'):
+        # paper figures: no big AMCL pose arrow (covariance ellipse stays), one sharp path colour per robot, large borderless view
+        colours = {'tb1': '0; 110; 255', 'tb2': '255; 120; 0', 'tb3': '40; 190; 60'}
+        for d in displays:
+            robot = next((r for r in colours if d['Name'].startswith(r)), None)
+            if d['Class'] == 'rviz_default_plugins/Path' and robot:
+                d.update({'Color': colours[robot], 'Line Width': 0.035, 'Line Style': 'Billboards', 'Alpha': 1.0,
+                          'Offset': {'X': 0.0, 'Y': {'tb1': 0.035, 'tb2': -0.035}.get(robot, 0.0), 'Z': 0.0}})
+            if d['Class'] == 'rviz_default_plugins/PoseWithCovariance':
+                d.update({'Shape': 'Axes', 'Axes Length': 0.001, 'Axes Radius': 0.001})
+                d.setdefault('Covariance', {}).setdefault('Orientation', {})['Value'] = False      # no yaw-covariance wedge
+        config['Window Geometry'].update({'Width': 1900, 'Height': 1130, 'X': 0, 'Y': 0, 'Hide Left Dock': True, 'Hide Right Dock': True})
     (runtime/'capture.rviz').write_text(yaml.safe_dump(config))
     actions = [ExecuteProcess(cmd=['gzserver', '--verbose', str(here/'three_robot_t.world'),
                                   '-s','libgazebo_ros_init.so','-s','libgazebo_ros_factory.so'], output='screen'),
@@ -57,36 +72,7 @@ def generate_launch_description():
         params = yaml.safe_load((root/'nav2_tb1.yaml').read_text().replace('/tb1/',f'/{robot}/'))
         params['amcl']['ros__parameters']['initial_pose'].update(x=float(x),y=float(y),yaw=float(yaw))
         if os.environ.get('DEMO_CONTROLLER','hybrid')=='hybrid':
-            params['controller_server']['ros__parameters']['controller_plugins'].append('CorridorFollow')
-            params['controller_server']['ros__parameters']['CorridorFollow']={
-                'plugin':'nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController',
-                'desired_linear_vel':.16,'lookahead_dist':.20,
-                'min_lookahead_dist':.10,'max_lookahead_dist':.25,'lookahead_time':1.,
-                'use_velocity_scaled_lookahead_dist':False,'transform_tolerance':.3,
-                'use_rotate_to_heading':True,'rotate_to_heading_min_angle':.15,
-                'rotate_to_heading_angular_vel':.25,'max_angular_accel':.8,
-                'allow_reversing':False,'use_collision_detection':True,
-                # At 0.16 m/s with 0.35 m/s^2 deceleration, braking is
-                # ~0.037 m. Keep collision checking, but avoid the old
-                # 1 s preview pre-empting the 0.25 m bound trigger.
-                'max_allowed_time_to_collision_up_to_carrot':.4,
-                'use_regulated_linear_velocity_scaling':True,
-                'regulated_linear_scaling_min_radius':.3,
-                'regulated_linear_scaling_min_speed':.04,
-                'use_cost_regulated_linear_velocity_scaling':False,
-                'min_approach_linear_velocity':.025,'approach_velocity_scaling_dist':.20}
-            # Tight curved intervention paths need a shorter carrot than
-            # the straight approach, otherwise it cuts across the corner.
-            params['controller_server']['ros__parameters']['controller_plugins'].append('TurnFollow')
-            params['controller_server']['ros__parameters']['TurnFollow']={
-                **params['controller_server']['ros__parameters']['CorridorFollow'],
-                'lookahead_dist':.06,'min_lookahead_dist':.05,'max_lookahead_dist':.10,
-                'rotate_to_heading_min_angle':.5,'allow_reversing':True,
-                'use_rotate_to_heading':False,'regulated_linear_scaling_min_speed':.02}
-            params['controller_server']['ros__parameters']['controller_plugins'].append('ResumeFollow')
-            params['controller_server']['ros__parameters']['ResumeFollow']={
-                **params['controller_server']['ros__parameters']['TurnFollow'],
-                'allow_reversing':False,'use_rotate_to_heading':True}
+            add_hybrid_controllers(params)
         path = runtime/f'capture_{robot}.yaml'
         path.write_text(yaml.safe_dump(params))
         actions.extend([

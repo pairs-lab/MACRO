@@ -14,7 +14,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2]))
 sys.path.insert(0,str(HERE.parent))
-from simulations.ros2.navigation import Audit, pose
+from simulations.ros2.navigation import Audit, pose, BASE_FRAME
 from simulations.ros2.marco_geometry import padded_bounds_overlap, passage_is_clear
 from simulations.ros2.planner_worker import PlannerWorker
 from simulations.ros2.marco_geometry import ROBOT_RADIUS, swept_separation, remaining_route, routes_are_disjoint
@@ -49,7 +49,7 @@ def main():
         for r,m in list(costmaps.items()):
             origin=m.info.origin.position
             try:
-                tf=audit.buffers[r].lookup_transform(m.header.frame_id,'base_footprint',Time())
+                tf=audit.buffers[r].lookup_transform(m.header.frame_id,BASE_FRAME,Time())
                 q=tf.transform.rotation;p=tf.transform.translation
                 actual=[p.x,p.y,math.atan2(2*q.w*q.z,1-2*q.z*q.z)]
             except Exception:actual=None
@@ -82,6 +82,7 @@ def main():
         e={'stage':stage,'wall_s':time.monotonic()-start,
            'ros_s':audit.get_clock().now().nanoseconds/1e9,**kwargs}
         record['stages'].append(e);print(json.dumps(e),flush=True)
+    envelope_violation={}
     def guard():
         nonlocal last
         if any(time.monotonic()-audit.pose_times.get(r,0)>1.5 for r in robots):
@@ -92,15 +93,30 @@ def main():
             record['min_swept_separation_m']=min(record['min_swept_separation_m'] or d,d)
             if d<=.44 or padded_bounds_overlap(audit.poses[a],audit.poses[b]):
                 raise RuntimeError(f'Live swept/footprint guard violated: {a}/{b}, {d:.3f}m')
+        now_ros=audit.get_clock().now().nanoseconds/1e9
         for r in held:
             if not passage_is_clear(audit.poses[r],protected,.08):
                 raise RuntimeError(f'{r} lost protected passage clearance')
             v,w=audit.twists.get(r,(0.,0.))
             if abs(w)>=.03 and not staging_idle_safe(r,v,w):
-                raise RuntimeError(f'{r} lost all-yaw holding envelope: v={v:.4f}, w={w:.4f}')
+                # Residual yaw of a held body is bled off by the velocity brake; only a
+                # violation that persists (1 s of ROS time) is a lost holding envelope.
+                since=envelope_violation.setdefault(r,now_ros)
+                if now_ros-since>=1.0:
+                    raise RuntimeError(f'{r} lost all-yaw holding envelope: v={v:.4f}, w={w:.4f}')
+            else:envelope_violation.pop(r,None)
         last=current
         record['positions'].append({'wall_s':time.monotonic()-start,'poses':{r:audit.poses[r][:] for r in robots}})
     def pump():audit.pump();guard()
+    def wait_quiet(r,seconds=12.):
+        quiet=None;stop_by=time.monotonic()+seconds
+        while time.monotonic()<stop_by:
+            pump();v,w=audit.twists.get(r,(1.,1.))
+            if abs(v)<.01 and abs(w)<.03:
+                quiet=quiet or audit.get_clock().now().nanoseconds/1e9
+                if audit.get_clock().now().nanoseconds/1e9-quiet>=contract['profile']['settle_s']:return True
+            else:quiet=None
+        return False
     def send(r,cells,stage,controller_override=None,precise_goal=False,contract_action=None):
         path=audit.publish(r,stage,[[x*res,y*res] for x,y in cells])
         checker='clearance_goal_checker' if stage=='clearance' or precise_goal else 'general_goal_checker'
@@ -153,7 +169,7 @@ def main():
     try:
         audit.holding.update(robots)
         worker=PlannerWorker(HERE.parent,report,.22,HERE/'planner.py')
-        deadline=time.monotonic()+45
+        deadline=time.monotonic()+90
         while len(audit.odom)<3 or any(n.get_clock().now().nanoseconds==0 for n in nav.values()):
             for n in nav.values():rclpy.spin_once(n,timeout_sec=.02)
             audit.pump()
@@ -249,63 +265,86 @@ def main():
         record['execution_epoch_ros_s']=execution_epoch
         event('execution_epoch')
         guard()
-        for step in plan.get('relocation_sequence',[]):
-            capture_costmaps('before_'+step['robot_id'])
+        # ---- pipelined staging: every action is a generator advanced by one scheduler loop ----------------------
+        clearance_actions=contract['clearance']
+        action_state=['pending']*len(clearance_actions)      # pending -> running -> done
+        action_paths=[[[x*res,y*res] for x,y in a['path']] for a in clearance_actions]
+        def action_index(robot_id,kind):
+            return next(i for i,a in enumerate(clearance_actions) if a['robot']==robot_id and a['kind']==kind)
+        def remaining_of(i):
+            if action_state[i]=='pending':return action_paths[i]
+            return remaining_route(audit.poses['tb'+clearance_actions[i]['robot'][1:]],action_paths[i])
+        def blockers_clear(mine,ignore_robot=None,upto=None):
+            """Same gate as the prediction: `mine` is disjoint from the remaining route of every earlier unfinished action."""
+            for j in range(len(clearance_actions) if upto is None else upto):
+                if action_state[j]=='done' or clearance_actions[j]['robot']==ignore_robot:continue
+                if not routes_are_disjoint(remaining_of(j),mine,contract['profile']['release_margin_m']):return False
+            return True
+        def wait_gate(i):
+            while not blockers_clear(action_paths[i],clearance_actions[i]['robot'],i):yield
+            action_state[i]='running'
+        def quiet_gen(r,seconds=12.,safe=False):
+            quiet=None;stop_by=time.monotonic()+seconds
+            while time.monotonic()<stop_by:
+                yield
+                v,w=audit.twists.get(r,(1.,1.))
+                if (staging_idle_safe(r,v,w) if safe else (abs(v)<.01 and abs(w)<.03)):
+                    quiet=quiet or audit.get_clock().now().nanoseconds/1e9
+                    if audit.get_clock().now().nanoseconds/1e9-quiet>=contract['profile']['settle_s']:return True
+                else:quiet=None
+            return False
+        def stage_gen(step):
+            robot_id=step['robot_id'];r='tb'+robot_id[1:]
+            capture_costmaps('before_'+robot_id)
             if step.get('entry_path'):
-                r='tb'+step['robot_id'][1:];target=[v*res for v in step['entry_path'][-1]]
-                entry_action=next(a for a in contract['clearance'] if a['robot']==step['robot_id'] and a['kind']=='entry')
-                send(r,step['entry_path'],'clearance',contract_action=entry_action);deadline=time.monotonic()+30
+                target=[v*res for v in step['entry_path'][-1]]
+                i=action_index(robot_id,'entry')
+                yield from wait_gate(i)
+                send(r,step['entry_path'],'clearance',contract_action=clearance_actions[i]);deadline=time.monotonic()+30
                 while not nav[r].isTaskComplete():
-                    pump()
+                    yield
                     if time.monotonic()>deadline:raise TimeoutError(f'{r} pocket entry timeout')
-                if nav[r].getResult()!=TaskResult.SUCCEEDED or math.dist(audit.poses[r][:2],target)>.035:
-                    raise RuntimeError(f'{r} pocket entry failed')
-                audit.holding.add(r);quiet=None;deadline=time.monotonic()+12
-                while time.monotonic()<deadline:
-                    pump();v,w=audit.twists.get(r,(1.,1.))
-                    if abs(v)<.01 and abs(w)<.03:
-                        quiet=quiet or audit.get_clock().now().nanoseconds/1e9
-                        if audit.get_clock().now().nanoseconds/1e9-quiet>=contract['profile']['settle_s']:break
-                    else:quiet=None
-                else:raise RuntimeError(f'{r} pocket entry did not settle')
+                entry_corrections=0
+                while nav[r].getResult()!=TaskResult.SUCCEEDED or math.dist(audit.poses[r][:2],target)>.035:
+                    error=math.dist(audit.poses[r][:2],target)
+                    if entry_corrections>=2 or error>.15:raise RuntimeError(f'{r} pocket entry failed')
+                    entry_corrections+=1;audit.holding.add(r)
+                    if not (yield from quiet_gen(r)):raise RuntimeError(f'{r} pocket entry correction did not settle')
+                    record['prediction_contract_deviations'].append({'robot':r,'kind':'pocket_entry_pose_correction'})
+                    event('pocket_entry_pose_correction',robot=r,attempt=entry_corrections,goal_error_m=error)
+                    send(r,[[v/res for v in audit.poses[r][:2]],step['entry_path'][-1]],'clearance',controller_override='CorridorFollow',precise_goal=True)
+                    deadline=time.monotonic()+30
+                    while not nav[r].isTaskComplete():
+                        yield
+                        if time.monotonic()>deadline:raise TimeoutError(f'{r} pocket entry correction timeout')
+                audit.holding.add(r)
+                if not (yield from quiet_gen(r)):raise RuntimeError(f'{r} pocket entry did not settle')
+                action_state[i]='done'
                 event('pocket_entry_completed',robot=r,pose=audit.poses[r][:])
-            r='tb'+step['robot_id'][1:]
-            holding_action=next(a for a in contract['clearance'] if a['robot']==step['robot_id'] and a['kind']=='holding')
+            i=action_index(robot_id,'holding');holding_action=clearance_actions[i]
+            yield from wait_gate(i)
             send(r,step['path'],'clearance',contract_action=holding_action)
             target=[x*res for x in step['destination']];deadline=time.monotonic()+100;corrections=0
-            # R3 parks deeper by another 5 cm. A 5 cm tracking tolerance
-            # avoids DWB chasing a sub-cell pose after it has safely left
-            # the mouth. Actual passage/rotation/peer gates remain decisive.
+            # R3 parks deeper by another 5 cm. A 5 cm tracking tolerance avoids DWB chasing a sub-cell pose
+            # after it has safely left the mouth. Actual passage/rotation/peer gates remain decisive.
             holding_tolerance=holding_action['acceptance_m']
             while True:
-                pump();done=nav[r].isTaskComplete()
+                yield
+                done=nav[r].isTaskComplete()
                 error=math.dist(audit.poses[r][:2],target)
                 if passage_is_clear(audit.poses[r],protected,contract['profile']['clearance_margin_m']) and error<holding_tolerance:
                     nav[r].cancelTask();audit.holding.add(r)
-                    stop_by=time.monotonic()+12;quiet=None
-                    while time.monotonic()<stop_by:
-                        pump();v,w=audit.twists.get(r,(1.,1.))
-                        if staging_idle_safe(r,v,w):
-                            quiet=quiet or audit.get_clock().now().nanoseconds/1e9
-                            if audit.get_clock().now().nanoseconds/1e9-quiet>=contract['profile']['settle_s']:break
-                        else:quiet=None
-                    else:raise RuntimeError(f'{r} did not settle')
+                    if not (yield from quiet_gen(r,safe=True)):raise RuntimeError(f'{r} did not settle')
                     if not passage_is_clear(audit.poses[r],protected,.10):
                         raise RuntimeError(f'{r} unstable clearance')
-                    held.add(r);event('clearance_completed',robot=r,pose=audit.poses[r][:],goal_error_m=error,
-                                      holding_goal_tolerance_m=holding_tolerance);break
+                    held.add(r);action_state[i]='done'
+                    event('clearance_completed',robot=r,pose=audit.poses[r][:],goal_error_m=error,
+                          holding_goal_tolerance_m=holding_tolerance);return
                 if done:
                     if nav[r].getResult()==TaskResult.SUCCEEDED and corrections<2:
                         corrections+=1;audit.holding.add(r)
                         record['prediction_contract_deviations'].append({'robot':r,'kind':'staging_pose_correction'})
-                        quiet=None;stop_by=time.monotonic()+12
-                        while time.monotonic()<stop_by:
-                            pump();v,w=audit.twists.get(r,(1.,1.))
-                            if staging_idle_safe(r,v,w):
-                                quiet=quiet or audit.get_clock().now().nanoseconds/1e9
-                                if audit.get_clock().now().nanoseconds/1e9-quiet>=contract['profile']['settle_s']:break
-                            else:quiet=None
-                        else:raise RuntimeError(f'{r} pose correction did not settle')
+                        if not (yield from quiet_gen(r,safe=True)):raise RuntimeError(f'{r} pose correction did not settle')
                         event('staging_pose_correction',robot=r,attempt=corrections,
                               map_goal_error_m=math.dist(audit.poses[r][:2],target),
                               criterion='Nav2 succeeded but live map-frame clearance/goal gate not satisfied')
@@ -314,7 +353,11 @@ def main():
                         continue
                     raise RuntimeError(f'{r} clearance ended {nav[r].getResult()}, error={error:.3f}')
                 if time.monotonic()>deadline:raise TimeoutError(f'{r} clearance timeout')
+        stage_gens=[stage_gen(step) for step in plan.get('relocation_sequence',[])]
+        staged_robots={'tb'+step['robot_id'][1:] for step in plan.get('relocation_sequence',[])}
         pending=[r for r in plan['planned_paths'] if r!=priority and plan['planned_paths'][r]]
+        segment_corrections={r:0 for r in robots}
+        progress_ref={};stalled=set();stall_restarts={r:0 for r in robots}
         active={};times={};retries={r:0 for r in robots};segments={};segment_index={}
         segmented=(os.environ.get('DEMO_CONTROLLER','hybrid')=='hybrid' and
                    os.environ.get('DEMO_RESUME_POLICY','phase_specific')=='phase_specific')
@@ -328,23 +371,54 @@ def main():
             if not segmented:raise RuntimeError('Executor mode does not match prediction contract')
             segments[r]=contract['resume'][robot]
             segment_index[r]=0;active[r]=robot;times[r]=time.monotonic();send_segment(r)
-        resume(priority)
-        while active or pending:
+        priority_started=False
+        priority_path_m=[[x*res,y*res] for x,y in plan['planned_paths'][priority]]
+        while stage_gens or not priority_started or active or pending:
             pump()
+            for generator in list(stage_gens):
+                try:next(generator)
+                except StopIteration:stage_gens.remove(generator)
+            if not priority_started:
+                # same gate as the prediction: the priority route must be disjoint from every unfinished staging route
+                if blockers_clear(priority_path_m):
+                    resume(priority);priority_started=True
+                continue
             first=remaining_route(audit.poses[priority_name],[[x*res,y*res] for x,y in plan['planned_paths'][priority]])
             for robot in list(pending):
                 r='tb'+robot[1:]
+                if r in staged_robots and r not in held:continue   # its own staging action must have finished
                 second=remaining_route(audit.poses[r],[[x*res,y*res] for x,y in plan['planned_paths'][robot]])
                 if routes_are_disjoint(first,second,contract['profile']['release_margin_m']):
                     event('concurrent_release',robot=r,priority_still_active=priority_name in active)
                     resume(robot);pending.remove(robot)
             for r in list(active):
+                # Progress watchdog: a controller that creeps without advancing (observed when a resume
+                # starts far off the path heading) is cancelled so the bounded DWB recovery below takes over
+                # instead of waiting for the action timeout. No new path or candidate is created.
+                now_ros=audit.get_clock().now().nanoseconds/1e9
+                ref=progress_ref.get(r)
+                pose_now=audit.poses[r]
+                # Progress is a 3 cm displacement OR a 0.1 rad turn: a controller rotating in place toward the path is working.
+                if ref is None or math.dist(pose_now[:2],ref[0][:2])>.03 or abs(math.atan2(math.sin(pose_now[2]-ref[0][2]),math.cos(pose_now[2]-ref[0][2])))>.10:
+                    progress_ref[r]=(pose_now[:],now_ros)
+                elif now_ros-ref[1]>6.0 and not nav[r].isTaskComplete():
+                    event('resume_stalled',robot=r,stalled_s=now_ros-ref[1])
+                    nav[r].cancelTask();progress_ref.pop(r,None);stalled.add(r)
                 if nav[r].isTaskComplete():
+                    progress_ref.pop(r,None)
                     if nav[r].getResult()!=TaskResult.SUCCEEDED:
-                        if retries[r]>=2:raise RuntimeError(f'{r} resume failed after bounded controller retries')
-                        retries[r]+=1;nav[r].cancelTask();audit.holding.add(r)
-                        record['prediction_contract_deviations'].append({'robot':r,'kind':'DWB_controller_recovery'})
-                        event('controller_retry',robot=r,attempt=retries[r],
+                        if r in stalled:
+                            # A watchdog restart is waiting for a peer / costmap to clear, not a controller failure:
+                            # bounded separately (4) from the controller-failure retries (2).
+                            stalled.discard(r);stall_restarts[r]+=1
+                            if stall_restarts[r]>4:raise RuntimeError(f'{r} resume stalled repeatedly')
+                            kind='resume_stall_restart'
+                        else:
+                            if retries[r]>=2:raise RuntimeError(f'{r} resume failed after bounded controller retries')
+                            retries[r]+=1;kind='DWB_controller_recovery'
+                        nav[r].cancelTask();audit.holding.add(r)
+                        record['prediction_contract_deviations'].append({'robot':r,'kind':kind})
+                        event('controller_retry',robot=r,attempt=retries[r]+stall_restarts[r],
                               result=str(nav[r].getResult()),controller='FollowPath (DWB)',
                               criterion='same remaining planned path, no new candidate')
                         deadline=time.monotonic()+12;quiet=None
@@ -365,14 +439,22 @@ def main():
                     goal=[x*res for x in segments[r][segment_index[r]]['path'][-1]]
                     error=math.dist(audit.poses[r][:2],goal)
                     if segment_index[r]<len(segments[r])-1:
-                        if error>.035:raise RuntimeError(f'{r} intermediate resumption pose outside tolerance')
+                        if error>.035:
+                            if segment_corrections[r]>=2 or error>.15:raise RuntimeError(f'{r} intermediate resumption pose outside tolerance')
+                            segment_corrections[r]+=1;audit.holding.add(r)
+                            if not wait_quiet(r):raise RuntimeError(f'{r} resumption correction did not settle')
+                            record['prediction_contract_deviations'].append({'robot':r,'kind':'resumption_pose_correction'})
+                            event('resumption_pose_correction',robot=r,index=segment_index[r],attempt=segment_corrections[r],goal_error_m=error)
+                            send(r,[[v/res for v in audit.poses[r][:2]],[g/res for g in goal]],'resume',
+                                 controller_override='FollowPath',precise_goal=True)
+                            continue
                         event('resumption_segment_completed',robot=r,index=segment_index[r],goal_error_m=error)
                         segment_index[r]+=1;send_segment(r);continue
                     if error>.12:raise RuntimeError(f'{r} final pose outside tolerance')
                     event('goal_completed',robot=r,pose=audit.poses[r][:],goal_error_m=error)
                     audit.holding.add(r);active.pop(r)
                 elif time.monotonic()-times[r]>120:raise TimeoutError(f'{r} resumption timeout')
-            if pending and not active:raise RuntimeError('Completed priority still blocks resumption')
+            if pending and not active and not stage_gens:raise RuntimeError('Completed priority still blocks resumption')
         record['success']=True;event('mission_success')
         actual=audit.get_clock().now().nanoseconds/1e9-execution_epoch
         prediction=record['timing_prediction']['remaining_navigation_s']

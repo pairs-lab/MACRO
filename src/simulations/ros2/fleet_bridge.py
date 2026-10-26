@@ -3,6 +3,7 @@ import copy
 import os
 import xml.etree.ElementTree as ET
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from tf2_msgs.msg import TFMessage
@@ -13,7 +14,7 @@ from map_msgs.msg import OccupancyGridUpdate
 
 def frame(robot,value):
     value=value.lstrip('/')
-    return value if value=='map' else robot+'/'+value
+    return value if value=='map' or value.startswith(robot+'/') else robot+'/'+value
 
 def prefixed_urdf(robot,value):
     root=ET.fromstring(value)
@@ -29,11 +30,12 @@ class FleetBridge(Node):
         super().__init__('fleet_visualization_bridge')
         self.subs=[];self.static={};self.pubs={}
         transient=QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        latched_tf=QoSProfile(depth=100,durability=DurabilityPolicy.TRANSIENT_LOCAL)   # several latching publishers per robot
         sensor=QoSProfile(depth=20,reliability=ReliabilityPolicy.BEST_EFFORT)
         self.dynamic_pub=self.create_publisher(TFMessage,'/fleet/tf',100)
-        self.static_pub=self.create_publisher(TFMessage,'/fleet/tf_static',transient)
+        self.static_pub=self.create_publisher(TFMessage,'/fleet/tf_static',latched_tf)
         for robot in os.environ.get('FLEET_ROBOTS', 'tb1 tb2').split():
-            for static,topic,qos in [(False,'tf',sensor),(True,'tf_static',transient)]:
+            for static,topic,qos in [(False,'tf',sensor),(True,'tf_static',latched_tf)]:
                 self.subs.append(self.create_subscription(TFMessage,f'/{robot}/{topic}',
                     lambda m,r=robot,s=static:self.transforms(r,s,m),qos))
             pub=self.create_publisher(String,f'/fleet/{robot}/robot_description',transient)
@@ -51,14 +53,22 @@ class FleetBridge(Node):
         pub.publish(message)
     def transforms(self,robot,static,message):
         result=copy.deepcopy(message)
+        kept=[]
         for transform in result.transforms:
             transform.header.frame_id=frame(robot,transform.header.frame_id)
             transform.child_frame_id=frame(robot,transform.child_frame_id)
+            if transform.header.frame_id==transform.child_frame_id:continue   # TB4 aliases (odom/tb1/odom, base_link/tb1/base_link)
+            kept.append(transform)
             if static:self.static[transform.child_frame_id]=transform
+        result.transforms=kept
+        if not kept:return
         if static:self.static_pub.publish(TFMessage(transforms=list(self.static.values())))
         else:self.dynamic_pub.publish(result)
 
 if __name__=='__main__':
     rclpy.init();node=FleetBridge()
     try:rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):pass  # launch teardown is a normal stop
+    except Exception:
+        if rclpy.ok():raise  # an error while the context is still valid is real; after teardown it is not
     finally:node.destroy_node();rclpy.try_shutdown()

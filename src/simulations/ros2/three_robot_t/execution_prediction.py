@@ -35,14 +35,23 @@ def load_profile():
             'smoother': config['velocity_smoother']['ros__parameters']})
     if any(p != profiles[0] for p in profiles[1:]):
         raise RuntimeError('Prediction requires identical fleet controller profiles')
-    model = Path(os.environ['MARCO_ROS_MODEL_PACKAGE'])/'models/turtlebot3_waffle/model.sdf'
-    sdf = ET.parse(model)
-    plugin = next(p for p in sdf.iter('plugin') if p.find('wheel_diameter') is not None)
-    profile = {**profiles[0], 'wheel_radius_m': float(plugin.findtext('wheel_diameter'))/2,
-        'wheel_separation_m': float(plugin.findtext('wheel_separation')),
+    robot = os.environ.get('MARCO_ROBOT', 'tb3')
+    if robot == 'tb4':
+        # TurtleBot 4 / Create 3: the simulated diff-drive controller (irobot_create_control/config/control.yaml)
+        control = yaml.safe_load(Path(os.environ['MARCO_TB4_CONTROL_YAML']).read_text())['/**']['diffdrive_controller']['ros__parameters']
+        wheel = dict(radius=float(control['wheel_radius']), separation=float(control['wheel_separation']),
+                     acceleration=float(control['linear.x.max_acceleration']))
+    else:
+        model = Path(os.environ['MARCO_ROS_MODEL_PACKAGE'])/'models/turtlebot3_waffle/model.sdf'
+        sdf = ET.parse(model)
+        plugin = next(p for p in sdf.iter('plugin') if p.find('wheel_diameter') is not None)
+        wheel = dict(radius=float(plugin.findtext('wheel_diameter'))/2, separation=float(plugin.findtext('wheel_separation')),
+                     acceleration=float(plugin.findtext('max_wheel_acceleration')))
+    profile = {**profiles[0], 'wheel_radius_m': wheel['radius'],
+        'wheel_separation_m': wheel['separation'],
         # Gazebo diff-drive limits circumferential wheel speed in m/s,
         # then divides by wheel radius when writing the joint velocity.
-        'wheel_acceleration_m_s2': float(plugin.findtext('max_wheel_acceleration')),
+        'wheel_acceleration_m_s2': wheel['acceleration'],
         'dt_s': .05, 'max_action_s': 120., 'settle_s': .5,
         'handoff_s': 2/float(profiles[0]['frequency_hz']),
         'release_margin_m': .10, 'clearance_margin_m': .11,
@@ -81,7 +90,8 @@ def action_contract(plan, profile):
     return dict(grid_size=plan['grid_size'], priority_robot=plan['priority_robot'],
         protected_priority_corridor=plan.get('protected_priority_corridor'),
         clearance=clearance, resume=resume, profile=profile,
-        task_semantics='two independent navigation goals; idle R3; zero service')
+        task_semantics='two independent navigation goals; idle R3; zero service',
+        staging_policy='pipelined: an action starts when its route is disjoint (release margin) from the remaining routes of all earlier unfinished actions of other robots')
 
 
 def verify_contract(plan):
@@ -216,20 +226,75 @@ def rollout(action, initial, profile, resolution, deadline=None, protected=None)
     return dict(duration_s=t, final_pose=[x, y, yaw], trace=trace)
 
 
+def _pose_at(trace, at):
+    """Last predicted pose with time <= at (trace rows are [t, x, y, yaw])."""
+    low, high = 0, len(trace)-1
+    while low < high:
+        mid = (low+high+1)//2
+        if trace[mid][0] <= at:
+            low = mid
+        else:
+            high = mid-1
+    return trace[low][1:]
+
+
+def schedule_staging(contract, current, rollouts, deadline=None):
+    """Earliest start of every staging action under the executor's gate.
+
+    An action may start once its robot's previous action finished and its whole route is disjoint (release
+    margin) from the REMAINING route of every earlier action of another robot that has not finished.
+    Disjointness only grows as the earlier robot advances, so the earliest start is found on the earlier
+    trace's sample times.
+    """
+    res = contract['grid_size']; margin = contract['profile']['release_margin_m']
+    actions = contract['clearance']
+    paths = [[[x*res, y*res] for x, y in a['path']] for a in actions]
+    start = [0.]*len(actions); end = [0.]*len(actions); ready = {}
+    for i, action in enumerate(actions):
+        s = ready.get(action['robot'], 0.)
+        while True:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError('ROS staging schedule budget exhausted')
+            blocked_until = None
+            for j in range(i):
+                if actions[j]['robot'] == action['robot'] or end[j] <= s+1e-9:
+                    continue
+                if s < start[j]-1e-9:
+                    route, later = paths[j], start[j]
+                else:
+                    trace = rollouts[j]['trace']
+                    route = remaining_route(_pose_at(trace, s-start[j]), paths[j])
+                    later = next((start[j]+row[0] for row in trace if start[j]+row[0] > s+1e-9), end[j])
+                if not routes_are_disjoint(route, paths[i], margin):
+                    blocked_until = later if blocked_until is None else min(blocked_until, later)
+            if blocked_until is None:
+                break
+            s = max(blocked_until, s+1e-6)
+        start[i] = s; end[i] = s+rollouts[i]['duration_s']; ready[action['robot']] = end[i]
+    return start, end, paths
+
+
 def predict(contract, poses, deadline=None):
     profile = contract['profile']; res = contract['grid_size']
     current = {f'R{i}': list(poses[f'tb{i}']) for i in (1, 2, 3)}
     t = 0.; clearance = []; actions = []
     protected_cells=contract['protected_priority_corridor'] or contract['resume'][contract['priority_robot']][0]['path']
     protected=[[x*res,y*res] for x,y in protected_cells]
+    rollouts = []; staged_poses = dict(current)
     for action in contract['clearance']:
-        result = rollout(action, current[action['robot']], profile, res, deadline,protected)
+        result = rollout(action, staged_poses[action['robot']], profile, res, deadline, protected)
+        staged_poses[action['robot']] = result['final_pose']
+        rollouts.append(result)
+    start, end, clearance_paths = schedule_staging(contract, current, rollouts, deadline)
+    staging_end = {}
+    for action, result, begin, finish in zip(contract['clearance'], rollouts, start, end):
         current[action['robot']] = result['final_pose']
-        t += result['duration_s']
+        t = max(t, finish)
+        staging_end[action['robot']] = finish
         actions.append(dict(robot=action['robot'], kind=action['kind'],
-            controller=action['controller'], duration_s=result['duration_s'], completion_s=t))
+            controller=action['controller'], duration_s=result['duration_s'], start_s=begin, completion_s=finish))
         if action['kind'] == 'holding':
-            clearance.append(dict(robot='tb'+action['robot'][1:], predicted_completion_s=t))
+            clearance.append(dict(robot='tb'+action['robot'][1:], predicted_completion_s=finish))
     trajectories = {}; duration = {}
     for robot, parts in contract['resume'].items():
         trace = []; elapsed = 0.; state = current[robot]
@@ -240,10 +305,35 @@ def predict(contract, poses, deadline=None):
             actions.append(dict(robot=robot, kind='resume', controller=action['controller'],
                                 duration_s=result['duration_s']))
         trajectories[robot] = trace; duration[robot] = elapsed
-    priority = contract['priority_robot']; finishes = {priority: t+duration[priority]}
+    priority = contract['priority_robot']
     paths = {r: [[x*res, y*res] for part in parts for x, y in part['path']]
              for r, parts in contract['resume'].items()}
-    releases = {priority: t}
+    margin = profile['release_margin_m']
+
+    def free_time(path):
+        """Earliest time `path` is disjoint from the remaining routes of all unfinished staging actions."""
+        at = 0.
+        while True:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError('ROS release prediction budget exhausted')
+            blocked_until = None
+            for j in range(len(start)):
+                if end[j] <= at+1e-9:
+                    continue
+                if at < start[j]-1e-9:
+                    route, later = clearance_paths[j], start[j]
+                else:
+                    route = remaining_route(_pose_at(rollouts[j]['trace'], at-start[j]), clearance_paths[j])
+                    later = next((start[j]+row[0] for row in rollouts[j]['trace'] if start[j]+row[0] > at+1e-9), end[j])
+                if not routes_are_disjoint(route, path, margin):
+                    blocked_until = later if blocked_until is None else min(blocked_until, later)
+            if blocked_until is None:
+                return at
+            at = max(blocked_until, at+1e-6)
+
+    t_priority = free_time(paths[priority])
+    finishes = {priority: t_priority+duration[priority]}
+    releases = {priority: t_priority}
     for robot in paths:
         if robot == priority:
             continue
@@ -258,7 +348,8 @@ def predict(contract, poses, deadline=None):
                 release = elapsed; break
         if release is None:
             raise RuntimeError('Predicted priority still blocks resumption at final pose')
-        releases[robot] = t+release; finishes[robot] = t+release+duration[robot]
+        # a staged robot also waits until its own staging action has finished
+        releases[robot] = max(t_priority+release, staging_end.get(robot, 0.)); finishes[robot] = releases[robot]+duration[robot]
     return dict(model='controller-inspired buffered-path prediction v1 (not Nav2/Gazebo clone)',
         clearance=clearance, goal_completion_s={'tb'+r[1:]: v for r, v in finishes.items()},
         release_s={'tb'+r[1:]: v for r, v in releases.items()}, actions=actions,

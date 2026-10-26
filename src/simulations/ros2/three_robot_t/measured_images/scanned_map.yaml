@@ -1,6 +1,6 @@
 image: scanned_map.pgm
-resolution: 0.02500000037252903
-origin: [-3.2597531997409455, -2.6321138729129787, 0.0]
+resolution: 0.025
+origin: [-1.8875000000000002, -2.0375, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
