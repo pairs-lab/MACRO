@@ -180,6 +180,9 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
                 release_info['executor_route_selection_replayed'] = False
             except TimeoutError:
                 return fallback('dynamic_event_budget')
+        # Reserved paths of other, already running conflict groups (keys (robot_id, index), only
+        # with background planning) cannot be ordered to wait: forecast real robots only.
+        delays = {rid: value for rid, value in delays.items() if rid in by_id}
         forecast_paths = dict(candidate['preferred_paths'])
         forecast_paths.update(release_info.get('continuation_paths', {}))
         barrier = sum(float(step['delay']) for step in candidate.get('relocations', ()))

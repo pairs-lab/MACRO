@@ -2619,7 +2619,7 @@ class StandaloneSimulation:
                 last_frame = now
                 if not self.paused:
                     self.advance(min(elapsed, 0.05))
-                    last_frame = time.monotonic()      # planning time does not advance the clock
+                    last_frame = time.monotonic()
                 cv2.imshow(WINDOW_NAME, self._draw())
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
@@ -2768,11 +2768,11 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
 def run_standalone_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
                               planner_workers=None, release_prediction_model="dynamic_events_guarded",
                               hypothesis_workers=1):
-    """Open the GUI with the paper protocol: planning is synchronous (the simulation clock does
-    not advance while a conflict is being resolved) and the clock advances in steps of at most
-    1/60 s, so a mission gives the same result as in the paper benchmark."""
+    """Open the interactive demo. Conflict planning runs in the background while the robots keep
+    moving, so the window never freezes; the timing therefore differs slightly from the paper
+    benchmark, which pauses the simulation clock while planning (headless runner)."""
     sim = StandaloneSimulation(world_file, speed=speed, selection_policy=selection_policy,
-                               async_planning=False, planner_workers=planner_workers,
+                               async_planning=True, planner_workers=planner_workers,
                                hypothesis_workers=hypothesis_workers,
                                release_prediction_model=release_prediction_model)
     sim.planning_timeout_s = PAPER_PLANNING_TIMEOUT_S
