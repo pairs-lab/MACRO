@@ -51,6 +51,8 @@ RUNTIME_ALGORITHM_REVISION = "bounded-release-events-v6-dag-recourse"
 
 
 WINDOW_NAME = "Standalone Multi-Robot Grid Simulation"
+PAPER_STEP_S = 1.0 / 60.0           # simulation step of the paper protocol
+PAPER_PLANNING_TIMEOUT_S = 30.0     # conflict-planning budget of the paper protocol
 _DEFAULT_COLORS = ((50, 80, 240), (235, 140, 30), (60, 190, 70))
 PATH_PREVIEW_SECONDS = 0.0
 
@@ -672,6 +674,7 @@ class StandaloneSimulation:
         self.pending_conflict_plans = {}
         self._next_planning_id = 1
         self.paused = False
+        self.simulation_clock_s = 0.0
         self.active_resolutions = {}
         self._service_choice_cache = {}
         self._dag_lookahead_disabled = False
@@ -2588,6 +2591,17 @@ class StandaloneSimulation:
                 cv2.LINE_AA,
             )
 
+    def advance(self, duration):
+        """Advance the simulation by about `duration` seconds in paper-protocol steps: each step is
+        min(time to the next event, 1/60 s), independent of the display frame rate."""
+        if not hasattr(self, "simulation_clock_s"):
+            self.simulation_clock_s = 0.0
+        target = self.simulation_clock_s + duration
+        while self.simulation_clock_s < target - 1e-9:
+            dt = min(self.next_event_duration(), PAPER_STEP_S)
+            self.step(dt)
+            self.simulation_clock_s += dt
+
     def run(self):
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
         cv2.resizeWindow(WINDOW_NAME, self.width, self.height)
@@ -2600,11 +2614,8 @@ class StandaloneSimulation:
                 elapsed = now - last_frame
                 last_frame = now
                 if not self.paused:
-                    remaining = elapsed
-                    while remaining > 1e-9:
-                        dt = min(remaining, self.next_event_duration())
-                        self.step(dt)
-                        remaining -= dt
+                    self.advance(min(elapsed, 0.05))
+                    last_frame = time.monotonic()      # planning time does not advance the clock
                 cv2.imshow(WINDOW_NAME, self._draw())
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
@@ -2751,9 +2762,14 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
 
 
 def run_standalone_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
-                              planner_workers=None, release_prediction_model="events",
+                              planner_workers=None, release_prediction_model="dynamic_events_guarded",
                               hypothesis_workers=1):
-    StandaloneSimulation(world_file, speed=speed, selection_policy=selection_policy,
-                         planner_workers=planner_workers,
-                         hypothesis_workers=hypothesis_workers,
-                         release_prediction_model=release_prediction_model).run()
+    """Open the GUI with the paper protocol: planning is synchronous (the simulation clock does
+    not advance while a conflict is being resolved) and the clock advances in steps of at most
+    1/60 s, so a mission gives the same result as in the paper benchmark."""
+    sim = StandaloneSimulation(world_file, speed=speed, selection_policy=selection_policy,
+                               async_planning=False, planner_workers=planner_workers,
+                               hypothesis_workers=hypothesis_workers,
+                               release_prediction_model=release_prediction_model)
+    sim.planning_timeout_s = PAPER_PLANNING_TIMEOUT_S
+    sim.run()

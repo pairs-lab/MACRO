@@ -132,7 +132,7 @@ def parse_args():
     parser.add_argument("--hypothesis-workers", type=int, default=1,
                         help="CPU processes for candidate scoring inside each conflict group")
     parser.add_argument("--release-prediction-model", choices=("events", "dynamic_events_guarded"),
-                        default="events", help="Select guarded explicitly for the final paper method")
+                        default="dynamic_events_guarded", help="release prediction model (default: the paper method)")
     return parser.parse_args()
 
 
