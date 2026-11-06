@@ -674,7 +674,7 @@ class StandaloneSimulation:
         self.pending_conflict_plans = {}
         self._next_planning_id = 1
         self.paused = False
-        self.simulation_clock_s = 0.0
+        self.simulation_clock_s = self._clock_target = 0.0
         self.active_resolutions = {}
         self._service_choice_cache = {}
         self._dag_lookahead_disabled = False
@@ -2596,9 +2596,13 @@ class StandaloneSimulation:
         min(time to the next event, 1/60 s), independent of the display frame rate."""
         if not hasattr(self, "simulation_clock_s"):
             self.simulation_clock_s = 0.0
-        target = self.simulation_clock_s + duration
-        while self.simulation_clock_s < target - 1e-9:
+        # The target accumulates real time; a step is taken only once it fits, so the clock
+        # never runs ahead of real time (it lags by less than one step).
+        self._clock_target = max(getattr(self, "_clock_target", 0.0), self.simulation_clock_s) + duration
+        while True:
             dt = min(self.next_event_duration(), PAPER_STEP_S)
+            if self.simulation_clock_s + dt > self._clock_target + 1e-9:
+                break
             self.step(dt)
             self.simulation_clock_s += dt
 
