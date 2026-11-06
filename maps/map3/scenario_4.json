@@ -1,98 +1,105 @@
 {
   "base_world": "map.json",
-  "description": "Task scenario for map3.",
+  "description": "Controlled mission (long_transit, candidate seed 18206), replaces the tie mission map3/scenario_4.",
   "objects": [
-    {
-      "name": "bowl",
-      "cell": [
-        21,
-        19
-      ],
-      "radius_cells": 2,
-      "color_bgr": [
-        180,
-        180,
-        40
-      ],
-      "blocking": false
-    },
-    {
-      "name": "bowl_2",
-      "cell": [
-        -3,
-        -30
-      ],
-      "radius_cells": 2,
-      "color_bgr": [
-        180,
-        180,
-        40
-      ],
-      "blocking": false
-    },
     {
       "name": "apple",
       "cell": [
-        -4,
-        10
+        42,
+        -13
       ],
       "radius_cells": 1,
       "color_bgr": [
-        40,
-        40,
-        230
-      ],
-      "blocking": false
+        128,
+        220,
+        152
+      ]
     },
     {
-      "name": "tomato",
+      "name": "plate",
       "cell": [
-        12,
+        40,
         -14
       ],
       "radius_cells": 1,
       "color_bgr": [
-        40,
-        80,
-        240
-      ],
-      "blocking": false
+        94,
+        186,
+        118
+      ]
     },
     {
-      "name": "garbage",
+      "name": "tomato",
       "cell": [
-        11,
-        15
+        38,
+        -17
       ],
-      "radius_cells": 2,
+      "radius_cells": 1,
       "color_bgr": [
-        70,
-        70,
-        70
+        220,
+        152,
+        84
+      ]
+    },
+    {
+      "name": "book",
+      "cell": [
+        39,
+        -11
       ],
-      "blocking": false
+      "radius_cells": 1,
+      "color_bgr": [
+        186,
+        118,
+        210
+      ]
     },
     {
       "name": "sink",
       "cell": [
-        19,
-        -30
+        42,
+        11
       ],
       "radius_cells": 2,
       "color_bgr": [
         210,
         180,
         80
+      ]
+    },
+    {
+      "name": "fridge",
+      "cell": [
+        36,
+        -10
       ],
-      "blocking": false
+      "radius_cells": 2,
+      "color_bgr": [
+        210,
+        210,
+        210
+      ]
+    },
+    {
+      "name": "table",
+      "cell": [
+        42,
+        -20
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        120,
+        170,
+        210
+      ]
     }
   ],
   "robots": [
     {
       "id": "R1",
       "start_cell": [
-        6,
-        -15
+        35,
+        -14
       ],
       "color_bgr": [
         50,
@@ -103,34 +110,112 @@
     {
       "id": "R2",
       "start_cell": [
-        5,
-        18
+        29,
+        -19
       ],
       "color_bgr": [
         235,
         140,
         30
       ]
-    },
-    {
-      "id": "R3",
-      "start_cell": [
-        -10,
-        11
-      ],
-      "color_bgr": [
-        60,
-        190,
-        70
-      ]
     }
   ],
   "tasks": [
-    {"id": 1, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "tomato", "duration": 1.0, "node": []},
-    {"id": 2, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "tomato", "target": "bowl_2", "duration": 1.0, "node": [1]},
-    {"id": 3, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "apple", "duration": 1.0, "node": []},
-    {"id": 4, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "apple", "target": "bowl", "duration": 1.0, "node": [3]},
-    {"id": 5, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "garbage", "duration": 1.0, "node": []},
-    {"id": 6, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "garbage", "target": "sink", "duration": 1.0, "node": [5]}
+    {
+      "id": 1,
+      "candidate": [
+        "R2"
+      ],
+      "action": "pick",
+      "object": "apple",
+      "duration": 1,
+      "node": []
+    },
+    {
+      "id": 2,
+      "candidate": [
+        "R2"
+      ],
+      "action": "place",
+      "object": "apple",
+      "duration": 1,
+      "node": [
+        1
+      ],
+      "target": "table"
+    },
+    {
+      "id": 3,
+      "candidate": [
+        "R2"
+      ],
+      "action": "pick",
+      "object": "plate",
+      "duration": 1,
+      "node": [
+        2
+      ]
+    },
+    {
+      "id": 4,
+      "candidate": [
+        "R2"
+      ],
+      "action": "place",
+      "object": "plate",
+      "duration": 1,
+      "node": [
+        3
+      ],
+      "target": "table"
+    },
+    {
+      "id": 5,
+      "candidate": [
+        "R2"
+      ],
+      "action": "pick",
+      "object": "tomato",
+      "duration": 1,
+      "node": [
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "candidate": [
+        "R2"
+      ],
+      "action": "place",
+      "object": "tomato",
+      "duration": 1,
+      "node": [
+        5
+      ],
+      "target": "table"
+    },
+    {
+      "id": 7,
+      "candidate": [
+        "R1"
+      ],
+      "action": "pick",
+      "object": "book",
+      "duration": 1,
+      "node": []
+    },
+    {
+      "id": 8,
+      "candidate": [
+        "R1"
+      ],
+      "action": "place",
+      "object": "book",
+      "duration": 1,
+      "node": [
+        7
+      ],
+      "target": "table"
+    }
   ]
 }
