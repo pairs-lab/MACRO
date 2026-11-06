@@ -1,6 +1,7 @@
 """Run the standalone 2D multi-robot simulation."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -129,7 +130,7 @@ def parse_args():
         "dag_aware", "local_distance", "local_delay", "reroute_only", "downstream_priority"))
     parser.add_argument("--planner-workers", type=int, default=None,
                         help="CPU processes for independent moving conflict groups (default: robot count)")
-    parser.add_argument("--hypothesis-workers", type=int, default=1,
+    parser.add_argument("--hypothesis-workers", type=int, default=min(4, os.cpu_count() or 1),
                         help="CPU processes for candidate scoring inside each conflict group")
     parser.add_argument("--release-prediction-model", choices=("events", "dynamic_events_guarded"),
                         default="dynamic_events_guarded", help="release prediction model (default: the paper method)")

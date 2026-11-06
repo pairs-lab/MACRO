@@ -577,6 +577,16 @@ class StandaloneSimulation:
             int(round(self.offset_y + (max_z - cell[1] + 0.5) * self.scale)),
         )
 
+    def _display_position(self, robot):
+        """Drawn position only: the robot's cell, moved along its current edge by the travelled
+        fraction, so motion looks continuous instead of jumping one cell at a time."""
+        edge = robot.movement_edge
+        if edge is None or tuple(edge[0]) != tuple(robot.cell) or not self._is_navigating(robot):
+            return robot.cell
+        length = math.dist(*edge)
+        f = min(max(robot.movement_credit / length, 0.0), 1.0) if length > 0 else 0.0
+        return (edge[0][0] + f * (edge[1][0] - edge[0][0]), edge[0][1] + f * (edge[1][1] - edge[0][1]))
+
     def _cell_from_pixel(self, pixel_x, pixel_y):
         """Convert a window pixel to the nearest JSON grid coordinate."""
         min_x, _, _, max_z = self.bounds
@@ -2380,7 +2390,7 @@ class StandaloneSimulation:
                         2,
                         cv2.LINE_AA,
                     )
-            centre = self._pixel(robot.cell)
+            centre = self._pixel(self._display_position(robot))
             cv2.circle(frame, centre, radius, robot.color, -1, cv2.LINE_AA)
             cv2.circle(frame, centre, radius, (10, 10, 10), 2, cv2.LINE_AA)
             cv2.putText(
