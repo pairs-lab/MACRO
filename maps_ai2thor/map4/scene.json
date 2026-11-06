@@ -1,0 +1,10 @@
+{
+  "name": "map4",
+  "description": "FloorPlan4 shared-workspace mission emphasizing a blocked fridge approach.",
+  "scene": "FloorPlan4",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "show_camera": false,
+  "grid_view": false
+}

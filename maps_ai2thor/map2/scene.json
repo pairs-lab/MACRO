@@ -1,0 +1,16 @@
+{
+  "name": "map2",
+  "description": "FloorPlan2 narrow-kitchen conflict mission with shared bowl and fridge regions.",
+  "scene": "FloorPlan2",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "interaction_positions": {
+    "sinkbasin": {
+      "x": 0.04,
+      "z": 0.82
+    }
+  },
+  "show_camera": false,
+  "grid_view": false
+}

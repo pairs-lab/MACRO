@@ -1,0 +1,10 @@
+{
+  "name": "map5",
+  "description": "FloorPlan5 high-contention mission with repeated bowl and fridge interactions.",
+  "scene": "FloorPlan5",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "show_camera": false,
+  "grid_view": false
+}

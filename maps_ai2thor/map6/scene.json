@@ -1,0 +1,18 @@
+{
+  "name": "map6",
+  "description": "Cooperative apple storage in FloorPlan2: R1 opens/closes the fridge while R2 stores apple; R3 independently toggles the coffee machine on, waits 2 seconds, then toggles it off. Runtime conflicts use the selected policy without scripted priority.",
+  "scene": "FloorPlan2",
+  "agent_count": 3,
+  "runtime_policy": "dag_aware",
+  "planning_timeout_s": 30.0,
+  "show_camera": false,
+  "grid_view": false,
+  "object_placements": [
+    {"name": "Apple", "instance": 0, "position": {"x": 0.45, "y": 1.06, "z": -1.44}, "apply": true, "force_kinematic": true}
+  ],
+  "robot_placements": [
+    {"id": "R1", "position": {"x": 0.92, "z": -0.26}, "rotation": 0, "apply": true},
+    {"id": "R2", "position": {"x": -0.46, "z": 2.17}, "rotation": 120, "apply": true},
+    {"id": "R3", "position": {"x": 0.90, "z": 0.83}, "rotation": 240, "apply": true}
+  ]
+}

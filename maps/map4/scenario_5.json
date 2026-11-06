@@ -1,0 +1,284 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map4.",
+  "objects": [
+    {
+      "name": "bowl",
+      "cell": [
+        23,
+        -7
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "apple",
+      "cell": [
+        -1,
+        15
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    },
+    {
+      "name": "tomato",
+      "cell": [
+        13,
+        17
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        80,
+        240
+      ],
+      "blocking": false
+    },
+    {
+      "name": "garbage",
+      "cell": [
+        13,
+        -33
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        70,
+        70,
+        70
+      ],
+      "blocking": false
+    },
+    {
+      "name": "apple_2",
+      "cell": [
+        -11,
+        -8
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    }
+  ],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        -7,
+        -16
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    },
+    {
+      "id": "R2",
+      "start_cell": [
+        -12,
+        5
+      ],
+      "color_bgr": [
+        235,
+        140,
+        30
+      ]
+    },
+    {
+      "id": "R3",
+      "start_cell": [
+        28,
+        4
+      ],
+      "color_bgr": [
+        60,
+        190,
+        70
+      ]
+    },
+    {
+      "id": "R4",
+      "start_cell": [
+        7,
+        -18
+      ],
+      "color_bgr": [
+        190,
+        80,
+        190
+      ]
+    },
+    {
+      "id": "R5",
+      "start_cell": [
+        5,
+        -37
+      ],
+      "color_bgr": [
+        40,
+        190,
+        210
+      ]
+    },
+    {
+      "id": "R6",
+      "start_cell": [
+        6,
+        29
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "pick",
+      "object": "apple",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 2,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "place",
+      "object": "apple",
+      "target": "bowl",
+      "duration": 1.0,
+      "node": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "pick",
+      "object": "apple_2",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 4,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "place",
+      "object": "apple_2",
+      "target": "bowl",
+      "duration": 1.0,
+      "node": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "pick",
+      "object": "tomato",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 6,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "place",
+      "object": "tomato",
+      "target": "bowl",
+      "duration": 1.0,
+      "node": [
+        5
+      ]
+    },
+    {
+      "id": 7,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "pick",
+      "object": "garbage",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 8,
+      "candidate": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "action": "place",
+      "object": "garbage",
+      "target": "bowl",
+      "duration": 1.0,
+      "node": [
+        7
+      ]
+    }
+  ]
+}

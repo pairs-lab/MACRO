@@ -1,0 +1,67 @@
+{
+  "format": "shared-core-execution-plan",
+  "description": "Bread and tomato branches converge at the bowl and then meet a third robot at the fridge.",
+  "robot_plans": {
+    "R1": [1, 3],
+    "R2": [2, 4, 6, 7],
+    "R3": [5, 8]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "action": "pick",
+      "object": "bread",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 2,
+      "action": "pick",
+      "object": "tomato",
+      "target": "",
+      "node": []
+    },
+    {
+      "id": 3,
+      "action": "place",
+      "object": "bread",
+      "target": "bowl",
+      "node": [1]
+    },
+    {
+      "id": 4,
+      "action": "place",
+      "object": "tomato",
+      "target": "bowl",
+      "node": [2]
+    },
+    {
+      "id": 5,
+      "action": "open",
+      "object": "fridge",
+      "target": "",
+      "node": [3]
+    },
+    {
+      "id": 6,
+      "action": "pick",
+      "object": "bowl",
+      "target": "",
+      "node": [3, 4]
+    },
+    {
+      "id": 7,
+      "action": "place",
+      "object": "bowl",
+      "target": "fridge",
+      "node": [5, 6]
+    },
+    {
+      "id": 8,
+      "action": "close",
+      "object": "fridge",
+      "target": "",
+      "node": [7]
+    }
+  ]
+}

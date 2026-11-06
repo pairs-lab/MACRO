@@ -1,0 +1,80 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map3.",
+  "objects": [
+    {
+      "name": "apple",
+      "cell": [
+        -3,
+        11
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    },
+    {
+      "name": "bowl",
+      "cell": [
+        13,
+        14
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "tomato",
+      "cell": [
+        11,
+        -9
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        80,
+        240
+      ],
+      "blocking": false
+    }
+  ],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        -10,
+        -24
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    },
+    {
+      "id": "R2",
+      "start_cell": [
+        -10,
+        13
+      ],
+      "color_bgr": [
+        235,
+        140,
+        30
+      ]
+    }
+  ],
+  "tasks": [
+    {"id": 1, "candidate": ["R1", "R2"], "action": "pick", "object": "apple", "duration": 1.0, "node": []},
+    {"id": 2, "candidate": ["R1", "R2"], "action": "place", "object": "apple", "target": "bowl", "duration": 1.0, "node": [1]},
+    {"id": 3, "candidate": ["R1", "R2"], "action": "pick", "object": "tomato", "duration": 1.0, "node": []},
+    {"id": 4, "candidate": ["R1", "R2"], "action": "place", "object": "tomato", "target": "bowl", "duration": 1.0, "node": [3]}
+  ]
+}

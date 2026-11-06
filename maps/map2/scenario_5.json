@@ -1,0 +1,209 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map2.",
+  "objects": [
+    {
+      "name": "bowl",
+      "cell": [
+        -11,
+        0
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "apple",
+      "cell": [
+        11,
+        -19
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    },
+    {
+      "name": "garbage",
+      "cell": [
+        -11,
+        12
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        70,
+        70,
+        70
+      ],
+      "blocking": false
+    },
+    {
+      "name": "sink",
+      "cell": [
+        23,
+        -18
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        210,
+        180,
+        80
+      ],
+      "blocking": false
+    }
+  ],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        -7,
+        25
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    },
+    {
+      "id": "R2",
+      "start_cell": [
+        17,
+        -20
+      ],
+      "color_bgr": [
+        235,
+        140,
+        30
+      ]
+    },
+    {
+      "id": "R3",
+      "start_cell": [
+        21,
+        -32
+      ],
+      "color_bgr": [
+        60,
+        190,
+        70
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "candidate": [
+        "R1"
+      ],
+      "action": "pick",
+      "object": "garbage",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 2,
+      "candidate": [
+        "R1"
+      ],
+      "action": "place",
+      "object": "garbage",
+      "target": "sink",
+      "duration": 1.0,
+      "node": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "candidate": [
+        "R3"
+      ],
+      "action": "toggle_on",
+      "object": "sink",
+      "duration": 1.0,
+      "node": [
+        2
+      ]
+    },
+    {
+      "id": 4,
+      "candidate": [
+        "R3"
+      ],
+      "action": "pick",
+      "object": "garbage",
+      "duration": 1.0,
+      "node": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "candidate": [
+        "R3"
+      ],
+      "action": "wash",
+      "object": "garbage",
+      "duration": 1.0,
+      "node": [
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "candidate": [
+        "R3"
+      ],
+      "action": "place",
+      "object": "garbage",
+      "target": "sink",
+      "duration": 1.0,
+      "node": [
+        5
+      ]
+    },
+    {
+      "id": 7,
+      "candidate": [
+        "R3"
+      ],
+      "action": "toggle_off",
+      "object": "sink",
+      "duration": 1.0,
+      "node": [
+        6
+      ]
+    },
+    {
+      "id": 8,
+      "candidate": [
+        "R2"
+      ],
+      "action": "pick",
+      "object": "apple",
+      "duration": 1.0,
+      "node": []
+    },
+    {
+      "id": 9,
+      "candidate": [
+        "R2"
+      ],
+      "action": "place",
+      "object": "apple",
+      "target": "bowl",
+      "duration": 1.0,
+      "node": [
+        8
+      ]
+    }
+  ]
+}

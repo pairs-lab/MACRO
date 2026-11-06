@@ -1,0 +1,18 @@
+{
+  "format": "shared-core-execution-plan",
+  "description": "R1 opens the fridge for R2 to store apple, then closes it after placement. Independently, R3 turns the coffee machine on, waits 2 seconds and turns it off. No scene-authored contact waits.",
+  "robot_plans": {
+    "R1": [1, 5],
+    "R2": [2, 4],
+    "R3": [3, 6, 7]
+  },
+  "tasks": [
+    {"id": 1, "action": "open", "object": "fridge", "target": "", "node": []},
+    {"id": 2, "action": "pick", "object": "apple", "target": "", "node": []},
+    {"id": 3, "action": "toggle_on", "object": "coffeemachine", "target": "", "node": []},
+    {"id": 4, "action": "place", "object": "apple", "target": "fridge", "node": [1, 2]},
+    {"id": 5, "action": "close", "object": "fridge", "target": "", "node": [4]},
+    {"id": 6, "action": "wait", "object": "coffeemachine", "target": "", "duration": 2.0, "node": [3]},
+    {"id": 7, "action": "toggle_off", "object": "coffeemachine", "target": "", "node": [6]}
+  ]
+}

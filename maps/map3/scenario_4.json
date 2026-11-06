@@ -1,0 +1,136 @@
+{
+  "base_world": "map.json",
+  "description": "Task scenario for map3.",
+  "objects": [
+    {
+      "name": "bowl",
+      "cell": [
+        21,
+        19
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "bowl_2",
+      "cell": [
+        -3,
+        -30
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        180,
+        180,
+        40
+      ],
+      "blocking": false
+    },
+    {
+      "name": "apple",
+      "cell": [
+        -4,
+        10
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        40,
+        230
+      ],
+      "blocking": false
+    },
+    {
+      "name": "tomato",
+      "cell": [
+        12,
+        -14
+      ],
+      "radius_cells": 1,
+      "color_bgr": [
+        40,
+        80,
+        240
+      ],
+      "blocking": false
+    },
+    {
+      "name": "garbage",
+      "cell": [
+        11,
+        15
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        70,
+        70,
+        70
+      ],
+      "blocking": false
+    },
+    {
+      "name": "sink",
+      "cell": [
+        19,
+        -30
+      ],
+      "radius_cells": 2,
+      "color_bgr": [
+        210,
+        180,
+        80
+      ],
+      "blocking": false
+    }
+  ],
+  "robots": [
+    {
+      "id": "R1",
+      "start_cell": [
+        6,
+        -15
+      ],
+      "color_bgr": [
+        50,
+        80,
+        240
+      ]
+    },
+    {
+      "id": "R2",
+      "start_cell": [
+        5,
+        18
+      ],
+      "color_bgr": [
+        235,
+        140,
+        30
+      ]
+    },
+    {
+      "id": "R3",
+      "start_cell": [
+        -10,
+        11
+      ],
+      "color_bgr": [
+        60,
+        190,
+        70
+      ]
+    }
+  ],
+  "tasks": [
+    {"id": 1, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "tomato", "duration": 1.0, "node": []},
+    {"id": 2, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "tomato", "target": "bowl_2", "duration": 1.0, "node": [1]},
+    {"id": 3, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "apple", "duration": 1.0, "node": []},
+    {"id": 4, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "apple", "target": "bowl", "duration": 1.0, "node": [3]},
+    {"id": 5, "candidate": ["R1", "R2", "R3"], "action": "pick", "object": "garbage", "duration": 1.0, "node": []},
+    {"id": 6, "candidate": ["R1", "R2", "R3"], "action": "place", "object": "garbage", "target": "sink", "duration": 1.0, "node": [5]}
+  ]
+}

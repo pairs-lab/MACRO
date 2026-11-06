@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments and local configuration
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Local research workspace (not published): benchmarks, baselines, experiments,
+# tests, paper figures and results.
+/benchmarks/
+/experiments/
+/results/
+/docs/
+/tests/
+/scripts/
+/pytest.ini
+/requirements-dev.txt
+/paper_figures/
+/paper_results_final/
+/tools/*.py
+!/tools/__init__.py
+/tools/ros2_storyboard/
+/.agents/
+/.codex/
+/.benchmarks/
+/src/LLM/
+/src/core/pc_cbs.py
+/src/core/pc_cbs_legacy.py
+/src/core/exact_reference.py
+/src/simulations/ai2thor/capabilities.py
+/src/simulations/ai2thor/examples/
+/*.pdf
+/*.png
+/*.log
+videos/
+maps/figures/
+
+# Generated navigation data
+.navigation_cache/
+
+# Credentials
+*.pem
+*.key
+credentials*.json
+secrets*.json
+*.lic
+*.p12
+*.pfx
+*.tar.gz
+*.zip
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Runtime output
+*.log
+crash.dmp
