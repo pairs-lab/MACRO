@@ -17,12 +17,12 @@ import numpy as np
 
 from core import optimize_task_assignments
 
-from .dynamic_collision import (
+from core.coordination.dynamic_collision import (
     check_dynamic_robot_collisions,
     swept_robot_corridor,
     swept_separation,
 )
-from .planner import (
+from core.coordination.planner import (
     _astar_around_robot_bodies,
     dynamic_replan_candidates,
     _interaction_goals,
@@ -31,7 +31,7 @@ from .planner import (
     select_dynamic_replan_path,
     with_geometry_cache,
 )
-from .relocation_search import (
+from core.coordination.relocation_search import (
     _candidate_diagnostic,
     _candidate_stable_key,
     _select_resolution_candidate,
@@ -41,7 +41,7 @@ from .relocation_search import (
     search_relocation_plan,
 )
 from .world import load_world
-from .release_events import (
+from core.coordination.release_events import (
     continuation_motion_is_clear, priority_motion_is_clear, distance_prefix,
     choose_continuation_route, wait_for_nominal_is_better,
 )
@@ -405,16 +405,16 @@ def _make_release_refiner(robots,tasks,task_status,objects,navigation_cells,
                           robot_radius,grid_size,speed,participants,model="events",horizon=5.,
                           verification_enabled=True, hypothesis_workers=1):
     if model == "events":
-        from .release_events import refine_release_events as refine_release_predictions
+        from core.coordination.release_events import refine_release_events as refine_release_predictions
     elif model == "replay":
-        from .dag_lookahead import refine_release_predictions
+        from core.coordination.dag_lookahead import refine_release_predictions
     elif model == "dynamic_events_verified":
-        from .verified_release import refine_verified_release
+        from core.coordination.verified_release import refine_verified_release
         def refine_release_predictions(candidates, **kwargs):
             return refine_verified_release(candidates, **kwargs, horizon=horizon,
                                            verification_enabled=verification_enabled)
     elif model in {"dynamic_events", "dynamic_events_v1", "dynamic_events_guarded"}:
-        from .dynamic_release import refine_dynamic_release_events
+        from core.coordination.dynamic_release import refine_dynamic_release_events
         def refine_release_predictions(candidates, **kwargs):
             return refine_dynamic_release_events(candidates, **kwargs, horizon=horizon,
                                                   use_release_guards=model == "dynamic_events_guarded",
@@ -433,7 +433,7 @@ def _make_release_refiner(robots,tasks,task_status,objects,navigation_cells,
 
 def _make_dag_refiner(robots, tasks, task_status, objects, navigation_cells,
                       robot_radius, grid_size, speed, participants):
-    from .dag_lookahead import refine_candidates, replay_candidate, successor_reservation_risk
+    from core.coordination.dag_lookahead import refine_candidates, replay_candidate, successor_reservation_risk
     def refine(candidates, stats, search_deadline, baseline_finishes, baseline_distance):
         if not successor_reservation_risk(candidates, robots=robots, tasks=tasks,
             task_status=task_status, objects=objects, navigation_cells=navigation_cells,
@@ -2647,7 +2647,7 @@ class StandaloneSimulation:
     def close(self):
         """Stop background planning workers without committing late results."""
         if getattr(self, "hypothesis_workers", 1) > 1:
-            from .dynamic_release import close_hypothesis_pools
+            from core.coordination.dynamic_release import close_hypothesis_pools
             close_hypothesis_pools()
         for pending in getattr(self, "pending_conflict_plans", {}).values():
             pending["future"].cancel()

@@ -140,7 +140,7 @@ def replay_candidate(candidate, *, robots, tasks, task_status, objects,
                      recourse_policy="local_delay",
                      recourse_release_prediction_model="dynamic_events_guarded"):
     # Lazy import avoids a cycle and guarantees shared movement/release code.
-    from .app import StandaloneSimulation, _compute_conflict_plan, _snapshot_remaining_path
+    from simulations.standalone.app import StandaloneSimulation, _compute_conflict_plan, _snapshot_remaining_path
     from .relocation_search import _remaining_dag_cost
 
     def check():

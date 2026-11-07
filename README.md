@@ -13,11 +13,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt            # 2D grid simulator
 pip install -r requirements-ai2thor.txt    # AI2-THOR (optional)
-```
 
-Optional C++ acceleration (needs a C++17 compiler):
-
-```bash
+# C++ modules (required; needs a C++17 compiler)
 pip install setuptools wheel pybind11
 pip install --no-build-isolation ./native/chain_bnb ./native/grid_geometry
 ```
@@ -48,9 +45,11 @@ python run_ai2thor.py --help
 
 | Directory | Contents |
 | --- | --- |
-| `src/core/` | Task assignment, DAG scheduling, coordination |
-| `src/simulations/standalone/` | 2D grid simulator and conflict resolution |
+| `src/core/assignment*.py` | Task assignment: Chain-BnB over task chains (C++ search) |
+| `src/core/dag_priority.py`, `yielding.py` | DAG priorities and yielding rules |
+| `src/core/coordination/` | Runtime conflict resolution: Branch-and-Bound over interventions (`relocation_search.py`), release-event and DAG-aware prediction (`release_events.py`, `dynamic_release.py`, `dag_lookahead.py`), geometry and path planning |
+| `src/simulations/standalone/` | 2D grid environment and viewer |
 | `src/simulations/ai2thor/` | AI2-THOR environment |
 | `maps/`, `maps_ai2thor/` | Scenarios |
 | `tools/maps/` | Map editing tools |
-| `native/` | Optional C++ modules |
+| `native/` | C++ modules (assignment search, grid geometry) |
