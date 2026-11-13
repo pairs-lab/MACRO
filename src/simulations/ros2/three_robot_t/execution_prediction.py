@@ -1,0 +1,360 @@
+"""A-priori ROS execution contract and bounded controller-inspired prediction.
+
+Not a Nav2/costmap or Gazebo physics clone. The approximation uses the actual
+launched RPP settings and SDF wheel acceleration, never measured trial times.
+The T-junction mission has two independent navigation goals and no service.
+"""
+import hashlib
+import json
+import math
+import os
+import time
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import yaml
+from simulations.ros2.marco_geometry import remaining_route, routes_are_disjoint, passage_is_clear
+
+HERE = Path(__file__).resolve().parent
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
+                                     allow_nan=False).encode()).hexdigest()
+
+
+def load_profile():
+    runtime = Path(os.environ.get('DEMO_REPORT_DIR', str(HERE)))
+    configs = [yaml.safe_load((runtime/f'capture_tb{i}.yaml').read_text()) for i in (1, 2, 3)]
+    profiles = []
+    for config in configs:
+        controller = config['controller_server']['ros__parameters']
+        profiles.append({'frequency_hz': controller['controller_frequency'],
+            'controllers': {k: controller[k] for k in ('CorridorFollow', 'TurnFollow', 'ResumeFollow')},
+            'checkers': {k: controller[k] for k in ('clearance_goal_checker', 'general_goal_checker')},
+            'smoother': config['velocity_smoother']['ros__parameters']})
+    if any(p != profiles[0] for p in profiles[1:]):
+        raise RuntimeError('Prediction requires identical fleet controller profiles')
+    robot = os.environ.get('MARCO_ROBOT', 'tb3')
+    if robot == 'tb4':
+        # TurtleBot 4 / Create 3: the simulated diff-drive controller (irobot_create_control/config/control.yaml)
+        control = yaml.safe_load(Path(os.environ['MARCO_TB4_CONTROL_YAML']).read_text())['/**']['diffdrive_controller']['ros__parameters']
+        wheel = dict(radius=float(control['wheel_radius']), separation=float(control['wheel_separation']),
+                     acceleration=float(control['linear.x.max_acceleration']))
+    else:
+        model = Path(os.environ['MARCO_ROS_MODEL_PACKAGE'])/'models/turtlebot3_waffle/model.sdf'
+        sdf = ET.parse(model)
+        plugin = next(p for p in sdf.iter('plugin') if p.find('wheel_diameter') is not None)
+        wheel = dict(radius=float(plugin.findtext('wheel_diameter'))/2, separation=float(plugin.findtext('wheel_separation')),
+                     acceleration=float(plugin.findtext('max_wheel_acceleration')))
+    profile = {**profiles[0], 'wheel_radius_m': wheel['radius'],
+        'wheel_separation_m': wheel['separation'],
+        # Gazebo diff-drive limits circumferential wheel speed in m/s,
+        # then divides by wheel radius when writing the joint velocity.
+        'wheel_acceleration_m_s2': wheel['acceleration'],
+        'dt_s': .05, 'max_action_s': 120., 'settle_s': .5,
+        'handoff_s': 2/float(profiles[0]['frequency_hz']),
+        'release_margin_m': .10, 'clearance_margin_m': .11,
+        'settle_clock': 'ROS simulation time',
+        'service_duration_s': 0., 'scope': 'three_robot_t navigation-only Gazebo pilot'}
+    if min(profile[k] for k in ('wheel_radius_m', 'wheel_separation_m',
+                                'wheel_acceleration_m_s2', 'frequency_hz')) <= 0:
+        raise ValueError('Non-positive controller/physics limits')
+    return profile
+
+
+def action_contract(plan, profile):
+    """The executor consumes these exact paths, plugins and goal checkers."""
+    clearance = []
+    for step in plan.get('relocation_sequence', []):
+        robot = step['robot_id']
+        if step.get('entry_path'):
+            clearance.append(dict(robot=robot, kind='entry', path=step['entry_path'],
+                controller='CorridorFollow', checker='clearance_goal_checker',
+                settle=True, acceptance_m=.035))
+        clearance.append(dict(robot=robot, kind='holding', path=step['path'],
+            controller='CorridorFollow' if robot == 'R3' else 'TurnFollow',
+            checker='clearance_goal_checker', settle=True,
+            acceptance_m=.05 if robot == 'R3' else .035))
+    resume = {}
+    for robot, path in plan['planned_paths'].items():
+        if not path:
+            continue
+        parts = plan.get('resumption_segments', {}).get(robot) or [
+            dict(path=path, controller='CorridorFollow')]
+        resume[robot] = [dict(robot=robot, kind='resume', path=part['path'],
+            controller=part['controller'], settle=False,
+            checker='clearance_goal_checker' if i < len(parts)-1 else 'general_goal_checker',
+            acceptance_m=.035 if i < len(parts)-1 else .12)
+            for i, part in enumerate(parts)]
+    return dict(grid_size=plan['grid_size'], priority_robot=plan['priority_robot'],
+        protected_priority_corridor=plan.get('protected_priority_corridor'),
+        clearance=clearance, resume=resume, profile=profile,
+        task_semantics='two independent navigation goals; idle R3; zero service',
+        staging_policy='pipelined: an action starts when its route is disjoint (release margin) from the remaining routes of all earlier unfinished actions of other robots')
+
+
+def verify_contract(plan):
+    contract = plan['execution_contract']
+    if digest(contract) != plan['execution_contract_sha256']:
+        raise RuntimeError('Execution contract hash mismatch')
+    if digest(action_contract(plan, contract['profile'])) != digest(contract):
+        raise RuntimeError('Paths/controllers changed after candidate evaluation')
+    if digest(load_profile()) != digest(contract['profile']):
+        raise RuntimeError('Launched controller/physics configuration changed')
+    return contract
+
+
+def _wrap(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def _clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def rollout(action, initial, profile, resolution, deadline=None, protected=None):
+    """Approximate RPP geometry, curvature/approach regulation and wheel limits.
+
+    Stop tolerance matches the action checker (holding may be cancelled by the
+    executor earlier). Costmap collision exceptions and AMCL are not simulated.
+    Trace times are relative to dispatch, including nominal action handoff.
+    """
+    p = profile['controllers'][action['controller']]
+    if p.get('use_velocity_scaled_lookahead_dist') or p.get('use_cost_regulated_linear_velocity_scaling'):
+        raise RuntimeError('Unsupported RPP configuration; refuse unmatched prediction')
+    path = [[x*resolution, y*resolution] for x, y in action['path']]
+    if not path or any(not math.isfinite(v) for point in path for v in point):
+        raise ValueError('Invalid execution path')
+    # Interpolate the identical polyline so nearest-pose pruning remains
+    # meaningful even for sparse waypoint paths (no geometric alteration).
+    dense = [path[0]]
+    for a,b in zip(path,path[1:]):
+        count=max(1,math.ceil(math.dist(a,b)/.025))
+        dense.extend([[a[j]+(b[j]-a[j])*i/count for j in (0,1)]
+                      for i in range(1,count+1)])
+    path=dense
+    cusps=[i for i in range(1,len(path)-1)
+           if sum((path[i][j]-path[i-1][j])*(path[i+1][j]-path[i][j])
+                  for j in (0,1)) < 0.]
+    suffix = [0.]*len(path)
+    for i in range(len(path)-2, -1, -1):
+        suffix[i] = suffix[i+1]+math.dist(path[i], path[i+1])
+    x, y, yaw = initial[:3]
+    left = right = 0.
+    dt = profile['dt_s']; t = profile['handoff_s']
+    trace = [[t, x, y, yaw]]; nearest = 0
+    radius = profile['wheel_radius_m']; separation = profile['wheel_separation_m']
+    max_delta = profile['wheel_acceleration_m_s2']/radius*dt
+    tolerance = (action['acceptance_m'] if action['kind']=='holding' else
+                 min(profile['checkers'][action['checker']]['xy_goal_tolerance'], action['acceptance_m']))
+    sm = profile['smoother']; command_v = command_w = 0.
+    for iteration in range(math.ceil(profile['max_action_s']/dt)):
+        if iteration % 20 == 0 and deadline is not None and time.perf_counter() >= deadline:
+            raise TimeoutError('ROS prediction budget exhausted')
+        goal_reached=math.hypot(x-path[-1][0], y-path[-1][1]) <= tolerance
+        passage_clear=(not goal_reached or action['kind']!='holding' or protected is None or
+                       passage_is_clear([x,y,yaw],protected,profile['clearance_margin_m']))
+        if goal_reached and passage_clear:
+            break
+        # Monotone local pruning avoids jumping to a later crossing on a path.
+        end = min(len(path), nearest+40)
+        nearest = min(range(nearest, end), key=lambda i: math.hypot(path[i][0]-x, path[i][1]-y))
+        carrot = path[-1]
+        lookahead = float(p['lookahead_dist'])
+        if p['allow_reversing']:
+            cusp=next((i for i in cusps if i>nearest),None)
+            if cusp is not None:
+                lookahead=min(lookahead,math.hypot(path[cusp][0]-x,path[cusp][1]-y))
+        for i in range(nearest, len(path)):
+            if math.hypot(path[i][0]-x, path[i][1]-y) >= lookahead:
+                carrot = path[i]
+                if i > nearest:
+                    a, b = path[i-1], path[i]
+                    dx, dy = b[0]-a[0], b[1]-a[1]
+                    aa = dx*dx+dy*dy
+                    bb = 2*((a[0]-x)*dx+(a[1]-y)*dy)
+                    cc = (a[0]-x)**2+(a[1]-y)**2-lookahead**2
+                    if aa and bb*bb-4*aa*cc >= 0:
+                        f = _clamp((-bb+math.sqrt(bb*bb-4*aa*cc))/(2*aa), 0., 1.)
+                        carrot = [a[0]+f*dx, a[1]+f*dy]
+                break
+        dx, dy = carrot[0]-x, carrot[1]-y
+        bx = math.cos(yaw)*dx+math.sin(yaw)*dy
+        by = -math.sin(yaw)*dx+math.cos(yaw)*dy
+        curvature = 2*by/(bx*bx+by*by) if bx*bx+by*by > .001 else 0.
+        angle = math.atan2(by, bx)
+        v = float(p['desired_linear_vel'])
+        if p['use_rotate_to_heading'] and abs(angle) > p['rotate_to_heading_min_angle']:
+            v = 0.
+            omega = math.copysign(min(p['rotate_to_heading_angular_vel'],
+                math.sqrt(2*p['max_angular_accel']*abs(angle))), angle)
+            current_omega = radius*(right-left)/separation
+            omega = _clamp(omega, current_omega-p['max_angular_accel']*dt,
+                           current_omega+p['max_angular_accel']*dt)
+        else:
+            if p['use_regulated_linear_velocity_scaling'] and abs(curvature) > 1e-9:
+                v *= min(1., 1/(abs(curvature)*p['regulated_linear_scaling_min_radius']))
+            v = max(v, p['regulated_linear_scaling_min_speed'])
+            remaining = suffix[nearest]+math.dist((x, y), path[nearest])
+            if remaining < p['approach_velocity_scaling_dist']:
+                v = min(v, max(p['min_approach_linear_velocity'],
+                    p['desired_linear_vel']*math.dist((x, y), path[-1])/p['approach_velocity_scaling_dist']))
+            if p['allow_reversing'] and bx < 0:
+                v = -v
+            omega = v*curvature
+        v = _clamp(v, sm['min_velocity'][0], sm['max_velocity'][0])
+        omega = _clamp(omega, sm['min_velocity'][2], sm['max_velocity'][2])
+        command_v += _clamp(v-command_v, sm['max_decel'][0]*dt, sm['max_accel'][0]*dt)
+        command_w += _clamp(omega-command_w, sm['max_decel'][2]*dt, sm['max_accel'][2]*dt)
+        v, omega = command_v, command_w
+        wanted_left = (v-omega*separation/2)/radius
+        wanted_right = (v+omega*separation/2)/radius
+        left += _clamp(wanted_left-left, -max_delta, max_delta)
+        right += _clamp(wanted_right-right, -max_delta, max_delta)
+        v = radius*(left+right)/2; omega = radius*(right-left)/separation
+        mid = yaw+omega*dt/2
+        x += v*math.cos(mid)*dt; y += v*math.sin(mid)*dt
+        yaw = _wrap(yaw+omega*dt); t += dt
+        trace.append([t, x, y, yaw])
+    else:
+        raise RuntimeError('Controller-inspired rollout did not reach action goal within 120 s')
+    if action['settle']:
+        # Nominal braking duration; holding feedback/AMCL settling not cloned.
+        t += max(abs(left), abs(right))*radius/profile['wheel_acceleration_m_s2']+profile['settle_s']
+    trace.append([t, x, y, yaw])
+    return dict(duration_s=t, final_pose=[x, y, yaw], trace=trace)
+
+
+def _pose_at(trace, at):
+    """Last predicted pose with time <= at (trace rows are [t, x, y, yaw])."""
+    low, high = 0, len(trace)-1
+    while low < high:
+        mid = (low+high+1)//2
+        if trace[mid][0] <= at:
+            low = mid
+        else:
+            high = mid-1
+    return trace[low][1:]
+
+
+def schedule_staging(contract, current, rollouts, deadline=None):
+    """Earliest start of every staging action under the executor's gate.
+
+    An action may start once its robot's previous action finished and its whole route is disjoint (release
+    margin) from the REMAINING route of every earlier action of another robot that has not finished.
+    Disjointness only grows as the earlier robot advances, so the earliest start is found on the earlier
+    trace's sample times.
+    """
+    res = contract['grid_size']; margin = contract['profile']['release_margin_m']
+    actions = contract['clearance']
+    paths = [[[x*res, y*res] for x, y in a['path']] for a in actions]
+    start = [0.]*len(actions); end = [0.]*len(actions); ready = {}
+    for i, action in enumerate(actions):
+        s = ready.get(action['robot'], 0.)
+        while True:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError('ROS staging schedule budget exhausted')
+            blocked_until = None
+            for j in range(i):
+                if actions[j]['robot'] == action['robot'] or end[j] <= s+1e-9:
+                    continue
+                if s < start[j]-1e-9:
+                    route, later = paths[j], start[j]
+                else:
+                    trace = rollouts[j]['trace']
+                    route = remaining_route(_pose_at(trace, s-start[j]), paths[j])
+                    later = next((start[j]+row[0] for row in trace if start[j]+row[0] > s+1e-9), end[j])
+                if not routes_are_disjoint(route, paths[i], margin):
+                    blocked_until = later if blocked_until is None else min(blocked_until, later)
+            if blocked_until is None:
+                break
+            s = max(blocked_until, s+1e-6)
+        start[i] = s; end[i] = s+rollouts[i]['duration_s']; ready[action['robot']] = end[i]
+    return start, end, paths
+
+
+def predict(contract, poses, deadline=None):
+    profile = contract['profile']; res = contract['grid_size']
+    current = {f'R{i}': list(poses[f'tb{i}']) for i in (1, 2, 3)}
+    t = 0.; clearance = []; actions = []
+    protected_cells=contract['protected_priority_corridor'] or contract['resume'][contract['priority_robot']][0]['path']
+    protected=[[x*res,y*res] for x,y in protected_cells]
+    rollouts = []; staged_poses = dict(current)
+    for action in contract['clearance']:
+        result = rollout(action, staged_poses[action['robot']], profile, res, deadline, protected)
+        staged_poses[action['robot']] = result['final_pose']
+        rollouts.append(result)
+    start, end, clearance_paths = schedule_staging(contract, current, rollouts, deadline)
+    staging_end = {}
+    for action, result, begin, finish in zip(contract['clearance'], rollouts, start, end):
+        current[action['robot']] = result['final_pose']
+        t = max(t, finish)
+        staging_end[action['robot']] = finish
+        actions.append(dict(robot=action['robot'], kind=action['kind'],
+            controller=action['controller'], duration_s=result['duration_s'], start_s=begin, completion_s=finish))
+        if action['kind'] == 'holding':
+            clearance.append(dict(robot='tb'+action['robot'][1:], predicted_completion_s=finish))
+    trajectories = {}; duration = {}
+    for robot, parts in contract['resume'].items():
+        trace = []; elapsed = 0.; state = current[robot]
+        for action in parts:
+            result = rollout(action, state, profile, res, deadline)
+            trace += [[elapsed+row[0], *row[1:]] for row in result['trace']]
+            elapsed += result['duration_s']; state = result['final_pose']
+            actions.append(dict(robot=robot, kind='resume', controller=action['controller'],
+                                duration_s=result['duration_s']))
+        trajectories[robot] = trace; duration[robot] = elapsed
+    priority = contract['priority_robot']
+    paths = {r: [[x*res, y*res] for part in parts for x, y in part['path']]
+             for r, parts in contract['resume'].items()}
+    margin = profile['release_margin_m']
+
+    def free_time(path):
+        """Earliest time `path` is disjoint from the remaining routes of all unfinished staging actions."""
+        at = 0.
+        while True:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError('ROS release prediction budget exhausted')
+            blocked_until = None
+            for j in range(len(start)):
+                if end[j] <= at+1e-9:
+                    continue
+                if at < start[j]-1e-9:
+                    route, later = clearance_paths[j], start[j]
+                else:
+                    route = remaining_route(_pose_at(rollouts[j]['trace'], at-start[j]), clearance_paths[j])
+                    later = next((start[j]+row[0] for row in rollouts[j]['trace'] if start[j]+row[0] > at+1e-9), end[j])
+                if not routes_are_disjoint(route, path, margin):
+                    blocked_until = later if blocked_until is None else min(blocked_until, later)
+            if blocked_until is None:
+                return at
+            at = max(blocked_until, at+1e-6)
+
+    t_priority = free_time(paths[priority])
+    finishes = {priority: t_priority+duration[priority]}
+    releases = {priority: t_priority}
+    for robot in paths:
+        if robot == priority:
+            continue
+        waiting = remaining_route(current[robot], paths[robot])
+        release = None
+        # Same remaining-corridor gate as the executor, not a distance/v gate.
+        for elapsed, x, y, yaw in trajectories[priority][::2]:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError('ROS release prediction budget exhausted')
+            if routes_are_disjoint(remaining_route([x, y, yaw], paths[priority]),
+                                   waiting, profile['release_margin_m']):
+                release = elapsed; break
+        if release is None:
+            raise RuntimeError('Predicted priority still blocks resumption at final pose')
+        # a staged robot also waits until its own staging action has finished
+        releases[robot] = max(t_priority+release, staging_end.get(robot, 0.)); finishes[robot] = releases[robot]+duration[robot]
+    return dict(model='controller-inspired buffered-path prediction v1 (not Nav2/Gazebo clone)',
+        clearance=clearance, goal_completion_s={'tb'+r[1:]: v for r, v in finishes.items()},
+        release_s={'tb'+r[1:]: v for r, v in releases.items()}, actions=actions,
+        remaining_navigation_s=max(finishes.values()), profile_sha256=digest(profile),
+        predictor_source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        excludes=['startup', 'planning', 'AMCL noise', 'costmap controller exceptions',
+                  'contact/friction physics', 'holding feedback dynamics', 'recovery actions'],
+        service_duration_s=0., fitted_to_execution_data=False)

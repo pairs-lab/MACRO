@@ -1,6 +1,6 @@
 # MARCO: Mission-Aware Runtime Coordination over Task Graphs
 
-Multi-robot task execution with a task DAG and online conflict resolution, in a 2D grid simulator and in AI2-THOR.
+Multi-robot task execution with a task DAG and online conflict resolution, in a 2D grid simulator, in AI2-THOR and in ROS 2 (Nav2, Gazebo).
 
 ## Install
 
@@ -41,6 +41,19 @@ python run_ai2thor.py map1 --view-only    # scene and robots only, no tasks
 python run_ai2thor.py --help
 ```
 
+## ROS 2 scenario (Nav2, Gazebo)
+
+Three robots exchange sides of a narrow T-junction, executed with Nav2/AMCL. Needs ROS 2 Humble; see
+`src/simulations/ros2/README.md` for the prerequisites.
+
+```bash
+pip install -r requirements-ros2.txt
+# TurtleBot 4 in Ignition Gazebo
+MARCO_TB4_WORKSPACE=/path/to/turtlebot4/workspace MARCO_PYTHON=$(which python) bash run_ros2_tb4.sh
+# TurtleBot 3 Waffle in Gazebo Classic
+MARCO_ROS_MODEL_PACKAGE=/path/to/multi_robot MARCO_PYTHON=$(which python) bash run_ros2.sh
+```
+
 ## Layout
 
 | Directory | Contents |
@@ -50,6 +63,7 @@ python run_ai2thor.py --help
 | `src/core/coordination/` | Runtime conflict resolution: Branch-and-Bound over interventions (`relocation_search.py`), release-event and DAG-aware prediction (`release_events.py`, `dynamic_release.py`, `dag_lookahead.py`), geometry and path planning |
 | `src/simulations/standalone/` | 2D grid environment and viewer |
 | `src/simulations/ai2thor/` | AI2-THOR environment |
+| `src/simulations/ros2/` | ROS 2 / Nav2 / Gazebo adapter (T-junction scenario) |
 | `maps/`, `maps_ai2thor/` | Scenarios |
 | `tools/maps/` | Map editing tools |
 | `native/` | C++ modules (assignment search, grid geometry) |
