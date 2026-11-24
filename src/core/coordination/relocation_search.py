@@ -887,8 +887,16 @@ def _nearest_feasible_relocations(
     nominal_path=None,
     path_budget=RELOCATION_PATH_BUDGET,
     route_scan_budget=None,
+    enabling_ids=(),
 ):
     """Return short, direction-diverse clearing moves, never goal-ranked.
+
+    With ``enabling_ids`` (paper Sec. VII-B, Expand, Eqs. (17)-(18)) the robots
+    listed there are not treated as obstacles; only *blocked clearances* are
+    returned, i.e. clearance configurations whose region (route and holding
+    footprint) meets one of those robots. Each step then carries its enabling
+    set ``enabling`` = {R' : z_R' in zeta(c_b)}; those robots must be cleared
+    from zeta(c_b) first, which composes the clearances of several robots.
 
     Static continuation to the task goal remains a feasibility check only.
     Top-K uses clearance time/margin and angular coverage so forward endpoints
@@ -905,8 +913,9 @@ def _nearest_feasible_relocations(
     footprint = _disk_offsets(clearance_cells)
     occupied = set()
     protected_ids = set(protected_paths)
+    enabling_ids = frozenset(enabling_ids) - {mover_id} - protected_ids
     for robot_id, cell in positions.items():
-        if robot_id == mover_id or robot_id in protected_ids:
+        if robot_id == mover_id or robot_id in protected_ids or robot_id in enabling_ids:
             continue
         occupied.update(
             (cell[0] + dx, cell[1] + dz)
@@ -938,16 +947,33 @@ def _nearest_feasible_relocations(
         path_count=scan_count,
     )
     centres = tuple(cell for robot_id, cell in positions.items()
-                    if robot_id != mover_id)
+                    if robot_id != mover_id and robot_id not in enabling_ids)
     prefixes = _clearance_tree_prefixes(
         parent, settled, start, forbidden, centres, clearance_cells, grid_size)
+    def tree_route(endpoint):
+        route = [endpoint]
+        while route[-1] in parent:
+            route.append(parent[route[-1]])
+        route.reverse()
+        return route
+
     eligible = []
+    enabling_of = {}
     for endpoint in endpoints:
         valid, exited, _, distance = prefixes[endpoint]
         if endpoint == start or not valid or not exited:
             continue
         if continuation_endpoints is not None and endpoint not in continuation_endpoints:
             continue
+        if enabling_ids:
+            # Blocked clearance: keep it only if its region zeta(c_b) meets a
+            # robot that can itself be cleared (the enabling set, Eq. (18)).
+            route = tree_route(endpoint)
+            enabling = sorted(robot_id for robot_id in enabling_ids
+                              if _path_conflict(route, [positions[robot_id]], clearance_cells))
+            if not enabling:
+                continue
+            enabling_of[endpoint] = enabling
         eligible.append(endpoint)
     margins = endpoint_margins(eligible, corridor_geometry)
     for endpoint, margin in zip(eligible, margins):
@@ -968,13 +994,13 @@ def _nearest_feasible_relocations(
     selected = []
     protects = tuple(sorted(protected_paths))
     for endpoint, distance, delay, group, margin in retained:
-        route = [endpoint]
-        while route[-1] in parent:
-            route.append(parent[route[-1]])
-        route.reverse()
-        selected.append(dict(robot_id=mover_id, start=start, destination=endpoint,
-                             distance=distance, delay=delay, direction_group=group,
-                             protects=protects, clearance_margin=margin, path=route))
+        route = tree_route(endpoint)
+        step = dict(robot_id=mover_id, start=start, destination=endpoint,
+                    distance=distance, delay=delay, direction_group=group,
+                    protects=protects, clearance_margin=margin, path=route)
+        if enabling_ids:
+            step["enabling"] = enabling_of[endpoint]
+        selected.append(step)
     return selected
 
 
@@ -1594,7 +1620,30 @@ def search_relocation_plan(
                 goal=robots_by_id[mover_id].goal,
                 nominal_path=initial_paths.get(mover_id),
             )
-            if not candidates:
+            # Paper Sec. VII-B, Expand (Eqs. (17)-(18)): a clearance of this
+            # blocker may be blocked by other robots standing in its region
+            # zeta(c_b). Those robots form the enabling set R_en(c_b), join the
+            # conflict group and become the next blockers, cleared from zeta(c_b)
+            # (and from the protected passage) before the blocker moves.
+            enabling_pool = (
+                sorted(search_ids - {priority_id, mover_id} - fixed_robot_ids - moved_ids)
+                if allow_composed_clearance else []
+            )
+            blocked = []
+            if enabling_pool and depth + 2 <= max_depth:
+                blocked = _nearest_feasible_relocations(
+                    mover_id=mover_id,
+                    positions=positions,
+                    protected_paths=protected,
+                    navigation_cells=navigation_cells,
+                    robot_radius=robot_radius,
+                    grid_size=grid_size,
+                    speed=speed_cells_per_second,
+                    goal=robots_by_id[mover_id].goal,
+                    nominal_path=initial_paths.get(mover_id),
+                    enabling_ids=enabling_pool,
+                )
+            if not candidates and not blocked:
                 stats["no_path_pruned"] += 1
                 continue
             stats["nearest_feasible_pruned"] += max(
@@ -1611,6 +1660,91 @@ def search_relocation_plan(
                     relocations + (step,),
                     depth + 1,
                 )
+            for step in blocked:
+                stats["enabling_expansions"] = stats.get("enabling_expansions", 0) + 1
+                for prefix, cleared in compose_enabling(
+                        step, positions, protected, depth + 1, moved_ids):
+                    next_positions = dict(cleared)
+                    next_positions[mover_id] = step["destination"]
+                    dfs(
+                        priority_id,
+                        priority_path,
+                        next_positions,
+                        relocations + prefix + (step,),
+                        depth + 1 + len(prefix),
+                    )
+
+    def compose_enabling(blocked_step, positions, protected, depth, moved_ids):
+        """Clear the enabling set R_en(c_b) of one blocked clearance c_b.
+
+        Each enabling robot R' is moved by the same Generate/Select/Expand
+        steps, with the blocker's clearance region zeta(c_b) added to the
+        protected passages, so its clearance node c' precedes c_b (edge
+        (c', c_b)). Yields (clearance steps of the enabling robots, positions
+        after them); enabling robots may themselves be blocked (recursion,
+        bounded by max_depth).
+        """
+        enabling = list(blocked_step["enabling"])
+        region = dict(protected)
+        region[blocked_step["robot_id"]] = list(blocked_step["path"])
+
+        def clear(index, current, steps, used_depth, cleared_ids):
+            if index == len(enabling):
+                yield steps, current
+                return
+            robot_id = enabling[index]
+            if robot_id in cleared_ids:
+                yield from clear(index + 1, current, steps, used_depth, cleared_ids)
+                return
+            if not _path_conflict(region[blocked_step["robot_id"]],
+                                  [current[robot_id]], clearance_cells):
+                # An earlier enabling move already freed this robot's spot.
+                yield from clear(index + 1, current, steps, used_depth, cleared_ids)
+                return
+            if used_depth + 1 > max_depth:
+                return
+            check_deadline()
+            options = _nearest_feasible_relocations(
+                mover_id=robot_id,
+                positions=current,
+                protected_paths=region,
+                navigation_cells=navigation_cells,
+                robot_radius=robot_radius,
+                grid_size=grid_size,
+                speed=speed_cells_per_second,
+                goal=robots_by_id[robot_id].goal,
+                nominal_path=initial_paths.get(robot_id),
+            )
+            nested = []
+            pool = sorted(search_ids - {robot_id, blocked_step["robot_id"]}
+                          - set(protected) - fixed_robot_ids - moved_ids - cleared_ids)
+            if pool and used_depth + 2 < max_depth:
+                nested = _nearest_feasible_relocations(
+                    mover_id=robot_id,
+                    positions=current,
+                    protected_paths=region,
+                    navigation_cells=navigation_cells,
+                    robot_radius=robot_radius,
+                    grid_size=grid_size,
+                    speed=speed_cells_per_second,
+                    goal=robots_by_id[robot_id].goal,
+                    nominal_path=initial_paths.get(robot_id),
+                    enabling_ids=pool,
+                )
+            for option in options:
+                moved = dict(current)
+                moved[robot_id] = option["destination"]
+                yield from clear(index + 1, moved, steps + (option,), used_depth + 1,
+                                 cleared_ids | {robot_id})
+            for option in nested:
+                for prefix, after in compose_enabling(option, current, region,
+                                                      used_depth + 1, moved_ids | cleared_ids):
+                    moved = dict(after)
+                    moved[robot_id] = option["destination"]
+                    yield from clear(index + 1, moved, steps + prefix + (option,),
+                                     used_depth + 1 + len(prefix), cleared_ids | {robot_id})
+
+        yield from clear(0, dict(positions), (), depth, frozenset())
 
     def ordered_joint_candidates(priority_id, *, fallback_full_scan=False):
         """Generate bounded ordered multi-robot candidates from one pool.
