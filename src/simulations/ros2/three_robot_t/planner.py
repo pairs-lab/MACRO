@@ -214,7 +214,7 @@ def plan(session, request):
         goal_adjustments.append({'name':obj['name'],'requested_cell':original,'safe_cell':snapped})
     world_path.write_text(json.dumps(payload))
     sim=GridSimulation(world_path,speed=.16/res,async_planning=False,
-        selection_policy='dag_aware',release_prediction_model='dynamic_events_guarded')
+        selection_policy='marco',release_prediction_model='dynamic_events_guarded')
     sim.planning_timeout_s=30.
     try:
         if os.environ.get('DEMO_CONTROLLER','hybrid')!='hybrid' or os.environ.get('DEMO_RESUME_POLICY','phase_specific')!='phase_specific':
@@ -272,7 +272,7 @@ def plan(session, request):
                 tasks=sim.tasks,task_status=sim.task_status,objects=sim.objects,
                 navigation_cells=sim.world.navigation_cells,robot_radius=sim.world.robot_radius,
                 grid_size=res,speed_cells_per_second=sim.steps_per_second,
-                selection_policy='dag_aware',planning_timeout_s=30.,
+                selection_policy='marco',planning_timeout_s=30.,
                 release_prediction_model='dynamic_events_guarded',execution_candidate_refiner=evaluate)
         finally:
             (report/'ros_candidate_evaluations.json').write_text(json.dumps(clean(evaluations),indent=2))

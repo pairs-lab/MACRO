@@ -20,16 +20,15 @@ from core.coordination.dynamic_collision import (
     swept_robot_corridor,
     swept_separation,
 )
-from core.coordination import negotiation
 from core.coordination.planner import (
     dynamic_replan_candidates,
     path_length,
     preferred_path_to_object,
 )
-from core.coordination.relocation_search import (
+from core.coordination.mdgs import (
     _path_conflict,
     _route_exits_without_reentry,
-    search_relocation_plan,
+    mdgs_resolve,
 )
 from .world import load_world
 from core.coordination.release_events import (
@@ -58,18 +57,21 @@ PATH_PREVIEW_SECONDS = 0.0
 
 class GridSimulation(GridRenderer):
     def __init__(self, world_file, width=1400, height=760, speed=8.0,
-                 selection_policy="dag_aware", async_planning=True,
+                 selection_policy="marco", async_planning=True,
                  initial_world=None, assignment_result=None,
                  use_dag_priority=True, incremental_dag_evaluation=True,
                  anticipated_delay_horizon=5., preserve_priority_corridor=True,
                  use_release_prediction=True, release_prediction_model="dynamic_events_guarded",
-                 planner_workers=None, hypothesis_workers=1):
+                 planner_workers=None, hypothesis_workers=1,
+                 allow_composed_clearance=True):
         if not isinstance(hypothesis_workers, int) or hypothesis_workers < 1:
             raise ValueError("hypothesis_workers must be a positive integer")
         self.hypothesis_workers = hypothesis_workers
+        # Ablation switch: False keeps only single-robot interventions.
+        self.allow_composed_clearance = bool(allow_composed_clearance)
         if planner_workers is not None and planner_workers < 1:
             raise ValueError("planner_workers must be positive")
-        if selection_policy not in {"dag_aware", "local_distance", "local_delay", "reroute_only", "negotiation_adapted", "downstream_priority"}:
+        if selection_policy not in {"marco", "local_distance", "local_delay", "reroute_only", "downstream_priority"}:
             raise ValueError(f"Unknown policy: {selection_policy}")
         self.selection_policy = selection_policy
         self.use_dag_priority = bool(use_dag_priority)
@@ -177,6 +179,7 @@ class GridSimulation(GridRenderer):
         self.paused = False
         self.active_resolutions = {}
         self._service_choice_cache = {}
+        self._unresolved_conflicts = {}
         self._release_prediction_disabled = False
         self.service_decision_history = []
         self.resolution_history = []
@@ -197,7 +200,6 @@ class GridSimulation(GridRenderer):
             self.robots.append(
                 RobotState(definition["id"], start, color)
             )
-        self.negotiation_state = negotiation.new_state(r.robot_id for r in self.robots)
         self._start_ready_tasks()
 
     def _print_assignment_summary(self):
@@ -282,9 +284,6 @@ class GridSimulation(GridRenderer):
             robot.current_task = task
             robot.goal = path[-1]
             robot.path = path
-            if self.selection_policy == "negotiation_adapted":
-                self.negotiation_state["initial_path_lengths"][
-                    f'{robot.robot_id}:{task["id"]}'] = path_length(path)
             robot.path_index = 0
             robot.phase = "preview"
             robot.preview_remaining = PATH_PREVIEW_SECONDS
@@ -594,7 +593,8 @@ class GridSimulation(GridRenderer):
                                     and not getattr(self,"_release_prediction_disabled",False)),
             release_prediction_model=getattr(self, "release_prediction_model", "dynamic_events_guarded"),
             hypothesis_workers=getattr(self, "hypothesis_workers", 1),
-            negotiation_state=deepcopy(getattr(self, "negotiation_state", None)),
+            allow_composed_clearance=getattr(self, "allow_composed_clearance", True),
+            non_enabling_robot_ids=self._reserved_robot_ids(),
 
             parallel_reserved_paths={
                 (rid, index): route for rid, routes in external_paths.items()
@@ -697,13 +697,13 @@ class GridSimulation(GridRenderer):
                 plan = pending["future"].result()
             except RuntimeError as error:
                 self._restore_pending_phases(pending)
-                if self.selection_policy == "negotiation_adapted":
-                    self._record_failed_conflict(
-                        [self._robot(rid) for rid in pending["participants"]], error)
-                    raise
                 if any(self._robot(rid).phase == "acting" and
                        self._robot(rid).action_remaining > 0
                        for rid in pending["participants"]):
+                    continue
+                self._record_failed_conflict(
+                    [self._robot(rid) for rid in pending["participants"]], error)
+                if self._hold_unresolved(pending["participants"]):
                     continue
                 raise RuntimeError(
                     "Active-agent conflict has no feasible direct reroute or "
@@ -716,6 +716,10 @@ class GridSimulation(GridRenderer):
             if not self._parallel_plan_is_current(plan, pending):
                 self._restore_pending_phases(pending)
                 print(f"P{planning_id} discarded because another group's corridor changed")
+                continue
+            if not self._enabled_robots_unchanged(plan):
+                self._restore_pending_phases(pending)
+                print(f"P{planning_id} discarded because an enabling robot changed")
                 continue
             self._record_conflict(plan, pending["participants"])
             print(f"P{planning_id} finished; committing on simulation thread")
@@ -795,7 +799,7 @@ class GridSimulation(GridRenderer):
                     evaluate("service_reroute", worker, route)
         # Non-preemptive service is a feasibility constraint, not a priority rule.
         # The same selector compares all scored candidates and relocation leaves.
-        plan = search_relocation_plan(
+        plan = mdgs_resolve(
             robots=cluster, dag_robots=self.robots,
             priority_robot_ids=[r.robot_id for r in workers],
             participant_ids=key, tasks=self.tasks, task_status=self.task_status,
@@ -804,29 +808,26 @@ class GridSimulation(GridRenderer):
             speed_cells_per_second=self.steps_per_second,
             additional_candidates=candidates,
             fixed_robot_ids=[r.robot_id for r in acting],
+            allow_composed_clearance=getattr(self, "allow_composed_clearance", True),
             external_protected_paths={
                 r.robot_id: self._remaining_path(r)
                 for r in self.robots if r.robot_id not in key
             },
             # A forecast wait cost is not a certified feasible upper bound for
             # a complete collision-free mission: never use it for BnB pruning.
-            dag_bound_pruning=False,
-            selection_policy=getattr(self, "selection_policy", "dag_aware"),
+            selection_policy=getattr(self, "selection_policy", "marco"),
             planning_timeout_s=getattr(self, "planning_timeout_s", None),
             local_time_evaluator=lambda candidate: _local_resolution_time(
                 candidate, self.robots, set(key), self.world.navigation_cells,
                 self.world.robot_radius, self.world.grid_size, self.steps_per_second, self.objects),
             diagnostics=getattr(self, "_service_search_diagnostics", None),
-            negotiation_selector=(negotiation.make_selector(
-                self.robots, self.negotiation_state, self.steps_per_second, set(key))
-                if self.selection_policy == "negotiation_adapted" else None),
             preserve_priority_corridor=getattr(self,"preserve_priority_corridor",True),
             dag_candidate_refiner=(
                 _make_release_refiner(self.robots,self.tasks,self.task_status,
                     self.objects,self.world.navigation_cells,self.world.robot_radius,self.world.grid_size,
                     self.steps_per_second,set(key),getattr(self,"release_prediction_model","dynamic_events_guarded"),
                     getattr(self,"anticipated_delay_horizon",5.),
-                    hypothesis_workers=getattr(self,"hypothesis_workers",1)) if self.selection_policy=="dag_aware"
+                    hypothesis_workers=getattr(self,"hypothesis_workers",1)) if self.selection_policy=="marco"
                     and getattr(self,"use_release_prediction",True)
                     and not getattr(self,"_release_prediction_disabled",False)
                     and getattr(self,"preserve_priority_corridor",True)
@@ -915,6 +916,8 @@ class GridSimulation(GridRenderer):
                         continue
                 cluster_ids.update(self._cancel_resolutions(overlaps))
             cluster = [self._robot(robot_id) for robot_id in sorted(cluster_ids)]
+            if self._holding_unresolved(cluster_ids):
+                continue
             if self.selection_policy == "reroute_only":
                 plan = self._plan_snapshot(cluster)
                 if plan is None:
@@ -941,7 +944,8 @@ class GridSimulation(GridRenderer):
                     error.stats = {**self._service_search_diagnostics, **getattr(error, "stats", {}),
                                    "planning_wall_time_s": time.perf_counter() - started}
                     self._record_failed_conflict(cluster, error)
-                    raise
+                    if not self._hold_unresolved(cluster_ids):
+                        raise
                 finally:
                     self.planning_wall_time_s += time.perf_counter() - started
                 # A selected reroute replaces the next edge in this same tick.
@@ -956,7 +960,12 @@ class GridSimulation(GridRenderer):
             if not workers:
                 continue
             if not getattr(self, "async_conflict_planning", False):
-                plan = self._plan_snapshot(cluster)
+                try:
+                    plan = self._plan_snapshot(cluster)
+                except (RuntimeError, TimeoutError):
+                    if self._hold_unresolved(cluster_ids):
+                        continue
+                    raise
                 self._record_conflict(plan, cluster_ids)
                 if plan["strategy"] == "short_replan":
                     self._begin_reroute_plan(plan, cluster_ids)
@@ -967,6 +976,39 @@ class GridSimulation(GridRenderer):
             self._submit_conflict_plan(cluster)
             activated = True
         return activated
+
+    def _team_signature(self):
+        return tuple(
+            (r.robot_id, r.cell, r.phase,
+             None if r.current_task is None else r.current_task["id"], r.goal)
+            for r in self.robots
+        )
+
+    def _hold_unresolved(self, robot_ids):
+        """Report an unresolved conflict and hold its robots under the guard.
+
+        MDGS gives no liveness guarantee: when the bounded search yields no
+        realizable branch, the robots keep their positions (the per-step
+        guard rejects every unsafe motion) and the conflict is searched again
+        only after the team state changes. Baselines defined to fail keep
+        raising.
+        """
+        if self.selection_policy == "reroute_only":
+            return False
+        key = tuple(sorted(robot_ids))
+        self._unresolved_conflicts[key] = self._team_signature()
+        print(f"Unresolved conflict for {', '.join(key)}; holding under the guard")
+        return True
+
+    def _holding_unresolved(self, robot_ids):
+        key = tuple(sorted(robot_ids))
+        held = getattr(self, "_unresolved_conflicts", {})
+        if key not in held:
+            return False
+        if held[key] == self._team_signature():
+            return True
+        del held[key]
+        return False
 
     def _plan_snapshot(self, cluster):
         started = time.perf_counter()
@@ -992,8 +1034,8 @@ class GridSimulation(GridRenderer):
                                         and not getattr(self,"_release_prediction_disabled",False)),
                 release_prediction_model=getattr(self, "release_prediction_model", "dynamic_events_guarded"),
                 hypothesis_workers=getattr(self, "hypothesis_workers", 1),
-                negotiation_state=getattr(self, "negotiation_state", None),
-
+                allow_composed_clearance=getattr(self, "allow_composed_clearance", True),
+                non_enabling_robot_ids=self._reserved_robot_ids(),
             )
         except (RuntimeError, TimeoutError) as error:
             error.stats = {**diagnostics, **getattr(error, "stats", {}),
@@ -1014,8 +1056,6 @@ class GridSimulation(GridRenderer):
         ))
 
     def _record_conflict(self, plan, participants):
-        if self.selection_policy == "negotiation_adapted":
-            negotiation.commit(self.negotiation_state, plan["search_stats"]["negotiation"])
         if plan.get("search_stats",{}).get("release_prediction",{}).get("status")=="fallback":
             self._release_prediction_disabled=True
         self.conflict_events.append(dict(
@@ -1028,12 +1068,27 @@ class GridSimulation(GridRenderer):
             search_stats=deepcopy(plan.get("search_stats", {})),
         ))
 
+    def _enabled_robots_unchanged(self, plan):
+        """An enabling robot joined R_c from its snapshot pose; recheck it."""
+        starts = {step["robot_id"]: step["start"] for step in plan.get("relocations", ())}
+        reserved = self._reserved_robot_ids()
+        for robot_id in plan.get("enabled_robots", ()):
+            robot = self._robot(robot_id)
+            if (robot_id in reserved or robot.phase != "idle"
+                    or robot.current_task is not None
+                    or tuple(robot.cell) != tuple(starts.get(robot_id, robot.cell))):
+                return False
+        return True
+
     def _begin_resolution_plan(self, plan, participant_ids):
         """Freeze affected workers and start an ordered relocation plan."""
         steps = list(plan["relocations"])
-        if not steps:
+        # A re-orientation branch has no steps: it goes straight to the
+        # yield-wait phase, in which R_h passes first.
+        if not steps and not plan.get("held_agents"):
             return None
-        participants = set(participant_ids)
+        # Enabling robots that joined R_c (18) are held by the same barrier.
+        participants = set(participant_ids) | set(plan.get("enabled_robots", ()))
         if self._overlapping_resolution_ids(participants):
             raise RuntimeError("A robot cannot belong to two active resolutions")
         resolution_id = self._next_resolution_id
@@ -1931,10 +1986,11 @@ def _local_resolution_time(candidate, robots, participants, navigation_cells,
     return math.inf
 
 
-def run_grid_simulation(world_file, *, speed=8.0, selection_policy="dag_aware",
+def run_grid_simulation(world_file, *, speed=8.0, selection_policy="marco",
                               planner_workers=None, release_prediction_model="dynamic_events_guarded",
-                              hypothesis_workers=1):
+                              hypothesis_workers=1, allow_composed_clearance=True):
     GridSimulation(world_file, speed=speed, selection_policy=selection_policy,
                          planner_workers=planner_workers,
                          hypothesis_workers=hypothesis_workers,
-                         release_prediction_model=release_prediction_model).run()
+                         release_prediction_model=release_prediction_model,
+                         allow_composed_clearance=allow_composed_clearance).run()

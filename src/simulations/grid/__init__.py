@@ -6,12 +6,12 @@ from core.coordination.dynamic_collision import (
     swept_robot_corridor,
 )
 from core.coordination.planner import select_preferred_path
-from core.coordination.relocation_search import search_relocation_plan
+from core.coordination.mdgs import mdgs_resolve
 
 __all__ = [
     "check_dynamic_robot_collisions",
     "run_grid_simulation",
-    "search_relocation_plan",
+    "mdgs_resolve",
     "select_preferred_path",
     "swept_robot_corridor",
 ]

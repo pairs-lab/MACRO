@@ -268,8 +268,18 @@ static PyObject* astar_bodies(PyObject*,PyObject* args) {
     if (!PyArg_ParseTuple(args,"OOOOdO",&free_object,&start_object,&goal_object,
                          &centres_object,&clearance,&blocked_object)) return nullptr;
     try {
-        auto free_vector=cells(free_object), blocked_vector=cells(blocked_object);
-        std::set<Cell> free(free_vector.begin(),free_vector.end());
+        // A prepared grid (prepare_grid) skips rebuilding the free set; its
+        // adjacency keeps the original move order and static corner rule.
+        NativeGrid* grid=nullptr;
+        std::set<Cell> uncached_free;
+        if (PyCapsule_IsValid(free_object,GRID_NAME)) {
+            grid=static_cast<NativeGrid*>(PyCapsule_GetPointer(free_object,GRID_NAME));
+        } else {
+            auto free_vector=cells(free_object);
+            uncached_free.insert(free_vector.begin(),free_vector.end());
+        }
+        const auto& free=grid ? grid->free : uncached_free;
+        auto blocked_vector=cells(blocked_object);
         std::set<Cell> blocked(blocked_vector.begin(),blocked_vector.end());
         Cell start=cell(start_object), goal=cell(goal_object); blocked.erase(start);
         if (!free.count(start) || !free.count(goal) || blocked.count(goal) || clearance<=0) Py_RETURN_NONE;
@@ -314,11 +324,7 @@ static PyObject* astar_bodies(PyObject*,PyObject* args) {
                 std::reverse(path.begin(),path.end());
                 return points(path);
             }
-            for (auto& move:moves) {
-                long dx=move[0],dy=move[1]; Cell next{x+dx,y+dy};
-                if (!free.count(next) || blocked.count(next)) continue;
-                if (dx && dy && (!free.count({x+dx,y}) || blocked.count({x+dx,y}) ||
-                                 !free.count({x,y+dy}) || blocked.count({x,y+dy}))) continue;
+            auto expand=[&](Cell next,bool diagonal) {
                 uint64_t next_mask=mask; bool valid=true;
                 for (size_t i=0;i<centres.size();++i) {
                     uint64_t bit=uint64_t(1)<<i;
@@ -332,13 +338,26 @@ static PyObject* astar_bodies(PyObject*,PyObject* args) {
                     if (next_distance<=distance(current,centres[i])+1e-9) {valid=false;break;}
                     if (next_distance>clearance+1e-9) next_mask |= bit;
                 }
-                if (!valid) continue;
+                if (!valid) return;
                 State next_state{next.first,next.second,next_mask};
-                double next_cost=cost+((dx && dy) ? std::sqrt(2.):1.);
+                double next_cost=cost+(diagonal ? std::sqrt(2.):1.);
                 auto old=costs.find(next_state);
-                if (old!=costs.end() && next_cost>=old->second) continue;
+                if (old!=costs.end() && next_cost>=old->second) return;
                 costs[next_state]=next_cost; parent[next_state]=state;
                 queue.emplace(next_cost+heuristic(next),next_cost,next.first,next.second,next_mask);
+            };
+            if (grid) {
+                for (const auto& edge:grid->neighbors.at(current)) {
+                    if (blocked.count(edge.next) || (edge.diagonal &&
+                        (blocked.count(edge.side1) || blocked.count(edge.side2)))) continue;
+                    expand(edge.next,edge.diagonal);
+                }
+            } else for (auto& move:moves) {
+                long dx=move[0],dy=move[1]; Cell next{x+dx,y+dy};
+                if (!free.count(next) || blocked.count(next)) continue;
+                if (dx && dy && (!free.count({x+dx,y}) || blocked.count({x+dx,y}) ||
+                                 !free.count({x,y+dy}) || blocked.count({x,y+dy}))) continue;
+                expand(next,dx && dy);
             }
         }
         Py_RETURN_NONE;
@@ -424,6 +443,6 @@ static PyMethodDef methods[]={
 static PyModuleDef module={PyModuleDef_HEAD_INIT,"_grid_geometry_native",nullptr,-1,methods};
 PyMODINIT_FUNC PyInit__grid_geometry_native() {
     PyObject* m=PyModule_Create(&module);
-    if (m) PyModule_AddStringConstant(m,"revision","grid-geometry-v5");
+    if (m) PyModule_AddStringConstant(m,"revision","grid-geometry-v6");
     return m;
 }

@@ -125,14 +125,16 @@ def parse_args():
         default=8.0,
         help="robot speed in grid units per second; diagonal edges cost sqrt(2) units (default: 8)",
     )
-    parser.add_argument("--policy", default="dag_aware", choices=(
-        "dag_aware", "local_distance", "local_delay", "reroute_only", "downstream_priority"))
+    parser.add_argument("--policy", default="marco", choices=(
+        "marco", "local_distance", "local_delay", "reroute_only", "downstream_priority"))
     parser.add_argument("--planner-workers", type=int, default=None,
                         help="CPU processes for independent moving conflict groups (default: robot count)")
     parser.add_argument("--hypothesis-workers", type=int, default=1,
                         help="CPU processes for candidate scoring inside each conflict group")
     parser.add_argument("--release-prediction-model", choices=("dynamic_events_guarded",),
                         default="dynamic_events_guarded", help="Current guarded prediction model")
+    parser.add_argument("--no-composed-clearance", action="store_true",
+                        help="ablation: keep only single-robot interventions")
     return parser.parse_args()
 
 
@@ -175,7 +177,8 @@ def main():
     run_grid_simulation(world, speed=args.speed, selection_policy=args.policy,
                              planner_workers=args.planner_workers,
                              hypothesis_workers=args.hypothesis_workers,
-                             release_prediction_model=args.release_prediction_model)
+                             release_prediction_model=args.release_prediction_model,
+                             allow_composed_clearance=not args.no_composed_clearance)
 
 
 if __name__ == "__main__":

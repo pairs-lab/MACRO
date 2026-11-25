@@ -209,7 +209,7 @@ class ExecutionPlanExecutor:
             self.planning_wall_time_s += planning_time
             self.conflict_events.append({
                 "conflict_id": len(self.conflict_events) + 1,
-                "policy": candidate.get("selection_policy", "dag_aware"),
+                "policy": candidate.get("selection_policy", "marco"),
                 "participants": sorted(int(value) for value in participants),
                 "selected_candidate": candidate.get("candidate_id"),
                 "strategy": candidate.get("strategy"),

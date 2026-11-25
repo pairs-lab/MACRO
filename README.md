@@ -23,7 +23,7 @@ python -m pip install --no-build-isolation ./native/grid_geometry
 ## Run a grid mission
 
 ```bash
-python main.py map1 scene1 --policy dag_aware --release-prediction-model dynamic_events_guarded
+python main.py map1 scene1 --policy marco --release-prediction-model dynamic_events_guarded
 ```
 
 The guarded prediction configuration is the only supported MARCO timing model and is enabled by default. Robots execute their assigned tasks concurrently, respecting dependencies. When paths conflict, the coordinator generates bounded interventions, predicts their timing effects, and evaluates the remaining mission DAG. Online repairs are not globally optimal plans.

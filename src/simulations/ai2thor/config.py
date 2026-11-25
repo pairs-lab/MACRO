@@ -30,13 +30,13 @@ def _positive_float_from_env(name, default):
 ITHOR_SCENE = os.environ.get("AI2THOR_SCENE", "FloorPlan1")
 AGENT_COUNT = _positive_int_from_env("AI2THOR_AGENT_COUNT", 3)
 RUNTIME_CONFLICT_POLICY = os.environ.get(
-    "AI2THOR_RUNTIME_POLICY", "dag_aware"
+    "AI2THOR_RUNTIME_POLICY", "marco"
 ).strip().lower()
 if RUNTIME_CONFLICT_POLICY not in {
-    "dag_aware", "local_distance", "local_delay", "reroute_only"
+    "marco", "local_distance", "local_delay", "reroute_only"
 }:
     raise ValueError(
-        "AI2THOR_RUNTIME_POLICY must be dag_aware, local_distance, "
+        "AI2THOR_RUNTIME_POLICY must be marco, local_distance, "
         "local_delay, or reroute_only"
     )
 RUNTIME_PLANNING_TIMEOUT = _positive_float_from_env(

@@ -3,16 +3,20 @@ Execution-specific local timing is supplied by the calling adapter.
 No simulator, GUI, Unity or ROS imports are required.
 """
 import time
-from . import negotiation
 from .dynamic_collision import swept_robot_corridor
 from .planner import (
     _astar_around_robot_bodies, select_dynamic_replan_path, with_geometry_cache,
     path_length,
 )
-from .relocation_search import (
+from .mdgs import (
     _candidate_diagnostic, _route_exits_without_reentry,
-    evaluate_reroute_plan, search_relocation_plan,
+    evaluate_reroute_plan, mdgs_resolve,
 )
+
+# Deterministic work budget of the release refiner: continuation routes
+# planned per conflict event (replaces the former 5 s wall-clock budget).
+PREDICTION_ROUTE_BUDGET = 2000
+
 
 def _snapshot_remaining_path(robot):
     """Return the untraversed centre path from an immutable robot snapshot."""
@@ -34,6 +38,27 @@ def _all_robot_protected_paths(robots, excluded_ids=()):
         for robot in robots
         if robot.robot_id not in excluded
     }
+
+
+def _enabling_candidates(dag_robots, cluster_ids, reserved_paths,
+                         non_enabling_ids=()):
+    """Stationary idle robots outside R_c that may join it as enabling robots.
+
+    A robot with an unexecuted reservation (another group's repair) or one
+    the executor has locked is never displaced by this group.
+    """
+    reserved = {key[0] if isinstance(key, tuple) else key
+                for key, route in (reserved_paths or {}).items()
+                if len(route) > 1}
+    excluded = set(cluster_ids) | set(non_enabling_ids) | reserved
+    return [
+        robot for robot in dag_robots
+        if robot.robot_id not in excluded
+        and robot.current_task is None
+        and robot.phase == "idle"
+        and getattr(robot, "waiting_for", None) is None
+        and _snapshot_remaining_path(robot) == [robot.cell]
+    ]
 
 
 def _route_clears_protected_corridors(
@@ -68,7 +93,7 @@ def compute_conflict_plan(
     robot_radius,
     grid_size,
     speed_cells_per_second,
-    selection_policy="dag_aware",
+    selection_policy="marco",
     planning_timeout_s=None,
     diagnostics=None,
     use_dag_priority=True,
@@ -78,9 +103,10 @@ def compute_conflict_plan(
     use_release_prediction=True,
     release_prediction_model="dynamic_events_guarded",
     hypothesis_workers=1,
-    negotiation_state=None,
     parallel_reserved_paths=None,
     execution_candidate_refiner=None,
+    allow_composed_clearance=True,
+    non_enabling_robot_ids=(),
     local_resolution_time_evaluator,
 ):
     """Plan from immutable snapshots without touching live simulation state.
@@ -90,8 +116,8 @@ def compute_conflict_plan(
     The adapter must return only executable, scored candidates and must fail
     closed if its evaluation budget is exhausted.
     """
-    if execution_candidate_refiner is not None and selection_policy != "dag_aware":
-        raise ValueError("An execution evaluator requires dag_aware selection")
+    if execution_candidate_refiner is not None and selection_policy != "marco":
+        raise ValueError("An execution evaluator requires MARCO (marco) selection")
     workers = [
         robot
         for robot in cluster
@@ -180,7 +206,7 @@ def compute_conflict_plan(
             "generated_candidates": len(additional_candidates),
             "planning_wall_time_s": time.perf_counter() - started}
         return selected
-    plan = search_relocation_plan(
+    plan = mdgs_resolve(
         robots=cluster,
         dag_robots=dag_robots,
         priority_robot_ids=(robot.robot_id for robot in workers),
@@ -196,7 +222,6 @@ def compute_conflict_plan(
         external_protected_paths=external_protected_paths,
         selection_policy=selection_policy,
         planning_timeout_s=planning_timeout_s,
-        dag_bound_pruning=False,
         local_time_evaluator=lambda candidate: local_resolution_time_evaluator(
             candidate, dag_robots, cluster_ids, navigation_cells,
             robot_radius, grid_size, speed_cells_per_second, objects),
@@ -209,13 +234,16 @@ def compute_conflict_plan(
                 robot_radius,grid_size,speed_cells_per_second,cluster_ids,release_prediction_model,
                 anticipated_delay_horizon,
                 hypothesis_workers=hypothesis_workers)
-            if selection_policy == "dag_aware" and use_release_prediction
+            if selection_policy == "marco" and use_release_prediction
                 and preserve_priority_corridor else None
         ),
         preserve_priority_corridor=preserve_priority_corridor,
-        negotiation_selector=(negotiation.make_selector(
-            dag_robots, negotiation_state, speed_cells_per_second, cluster_ids)
-            if selection_policy == "negotiation_adapted" else None),
+        allow_composed_clearance=allow_composed_clearance,
+        enabling_robots=(
+            _enabling_candidates(dag_robots, cluster_ids, parallel_reserved_paths,
+                                 non_enabling_robot_ids)
+            if allow_composed_clearance else ()
+        ),
     )
     plan["search_stats"]["planning_wall_time_s"] = time.perf_counter() - started
     return plan
@@ -236,6 +264,6 @@ def _make_release_refiner(robots, tasks, task_status, objects, navigation_cells,
             robot_radius=robot_radius, grid_size=grid_size, speed=speed,
             participants=participants, stats=stats, search_deadline=deadline,
             baseline_finishes=baseline_finishes, baseline_distance=baseline_distance,
-            horizon=horizon, budget_s=5.,
+            horizon=horizon, budget_s=None, route_budget=PREDICTION_ROUTE_BUDGET,
             hypothesis_workers=hypothesis_workers)
     return refine

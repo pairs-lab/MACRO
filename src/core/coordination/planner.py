@@ -72,12 +72,18 @@ def _copy_geometry_result(function_name, result):
     return deepcopy(result)
 
 
+# Process-wide memo of the pure geometry functions below. A result depends
+# only on the frozen arguments (and the backend in the key), so reusing it
+# across conflict events cannot change any decision; the per-snapshot cache
+# remains the first level and keeps its own statistics.
+_PERSISTENT_GEOMETRY = {}
+_PERSISTENT_GEOMETRY_LIMIT = 20000
+
+
 def _memoized_geometry(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
         cache = _GEOMETRY_CACHE.get()
-        if cache is None:
-            return function(*args, **kwargs)
         def freeze(value):
             if isinstance(value, (set, frozenset)):
                 return frozenset(value)
@@ -98,12 +104,19 @@ def _memoized_geometry(function):
                geometry_backend['revision'], geometry_backend['native_astar'],
                geometry_backend['native_grid_reuse'],
                freeze(args), freeze(kwargs))
-        if key in cache['values']:
+        if cache is not None and key in cache['values']:
             cache['hits'] += 1
             return _copy_geometry_result(function.__name__, cache['values'][key])
-        cache['misses'] += 1
-        result = function(*args, **kwargs)
-        if len(cache['values']) < 4096:
+        if cache is not None:
+            cache['misses'] += 1
+        if key in _PERSISTENT_GEOMETRY:
+            result = _copy_geometry_result(function.__name__, _PERSISTENT_GEOMETRY[key])
+        else:
+            result = function(*args, **kwargs)
+            if len(_PERSISTENT_GEOMETRY) >= _PERSISTENT_GEOMETRY_LIMIT:
+                _PERSISTENT_GEOMETRY.clear()
+            _PERSISTENT_GEOMETRY[key] = _copy_geometry_result(function.__name__, result)
+        if cache is not None and len(cache['values']) < 4096:
             cache['values'][key] = _copy_geometry_result(function.__name__, result)
         return result
     return wrapped
@@ -137,6 +150,15 @@ def _heuristic(cell, goal):
 @_memoized_geometry
 def astar(free_cells, start, goal, dynamic_obstacles=()):
     """Return a shortest 8-connected path without cutting blocked corners."""
+    from .native_geometry import backend, backend_info, prepared_astar_grid
+    native = backend()
+    if native is not None and backend_info()['native_astar']:
+        grid = prepared_astar_grid(free_cells)
+        if grid is not free_cells:
+            # The body-aware kernel without bodies is this search: same queue
+            # order (f, g, x, z), move order, step costs and corner rule.
+            return native.astar_bodies(grid, start, goal, (), 1.0,
+                                       tuple(dynamic_obstacles))
     blocked = set(dynamic_obstacles)
     blocked.discard(start)
     if start not in free_cells or goal not in free_cells or goal in blocked:
@@ -197,11 +219,11 @@ def _astar_around_robot_bodies(
     blocked while the planning robot is already touching it.
     """
     centres = tuple(robot_centres)
-    from .native_geometry import backend, backend_info
+    from .native_geometry import backend, backend_info, prepared_astar_grid
     native = backend()
     if native is not None and backend_info()['native_astar'] and len(centres) <= 63:
-        return native.astar_bodies(free_cells, start, goal, centres,
-                                   clearance_cells, extra_obstacles)
+        return native.astar_bodies(prepared_astar_grid(free_cells), start, goal,
+                                   centres, clearance_cells, extra_obstacles)
     blocked = set(extra_obstacles)
     blocked.discard(start)
     if (
@@ -403,28 +425,10 @@ def shortest_path_tree_to_any(free_cells, start, goals, *,
     Settled cells are returned parent-before-child for prefix validation.
     No feasibility-based pruning or alternative-parent selection is applied.
     """
-    from .native_geometry import backend
+    from .native_geometry import backend, prepared_grid
     native = backend()
     if native is not None:
-        import os
-        grid = free_cells
-        cache = _GEOMETRY_CACHE.get()
-        if (cache is not None and hasattr(native, 'prepare_grid') and
-                os.environ.get('MARCO_NATIVE_GRID_REUSE', '1') != '0'):
-            # Content-keyed, snapshot-local and bounded. Dynamic obstacles and
-            # goals are deliberately NOT embedded in this immutable geometry.
-            grids = cache.setdefault('native_navigation_grids', {})
-            stats = cache.setdefault('native_grid_stats', {'hits': 0, 'builds': 0, 'uncached': 0})
-            signature = frozenset(free_cells)
-            if signature in grids:
-                stats['hits'] += 1
-                grid = grids[signature]
-            elif len(grids) < 8:
-                grid = native.prepare_grid(signature)
-                grids[signature] = grid
-                stats['builds'] += 1
-            else:
-                stats['uncached'] += 1
+        grid = prepared_grid(free_cells)
         return native.shortest_path_tree(grid, start, goals,
                                          dynamic_obstacles, float(path_count))
     blocked = set(dynamic_obstacles)

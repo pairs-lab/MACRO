@@ -132,7 +132,7 @@ def _memoize_route_planner(route_planner):
 
 def _select_candidate(candidates, selection_policy, optimizer=optimize):
     """Apply the same information boundaries as the standalone policies."""
-    if selection_policy == "dag_aware":
+    if selection_policy == "marco":
         return optimizer(
             candidates,
             evaluator=lambda candidate: candidate["evaluation"],
@@ -385,7 +385,7 @@ def build_priority_hypotheses(
     remaining_estimator=None,
     robot_speed=DEFAULT_ROBOT_SPEED,
     candidate_validator=None,
-    selection_policy="dag_aware",
+    selection_policy="marco",
     max_candidates_per_root=DEFAULT_MAX_CANDIDATES_PER_ROOT,
     max_expanded_per_root=DEFAULT_MAX_EXPANDED_PER_ROOT,
     planning_timeout_s=None,
@@ -401,7 +401,7 @@ def build_priority_hypotheses(
         None if planning_timeout_s is None
         else started + float(planning_timeout_s)
     )
-    evaluate_dag = selection_policy == "dag_aware"
+    evaluate_dag = selection_policy == "marco"
     stats = diagnostics if diagnostics is not None else {}
     stats.update({
         "expanded": 0,
@@ -700,7 +700,7 @@ def select_minimum_disruption_plan(
     optimizer=optimize,
     priority_agents=None,
     candidate_validator=None,
-    selection_policy="dag_aware",
+    selection_policy="marco",
     planning_timeout_s=None,
     max_candidates_per_root=DEFAULT_MAX_CANDIDATES_PER_ROOT,
     max_expanded_per_root=DEFAULT_MAX_EXPANDED_PER_ROOT,
@@ -715,7 +715,7 @@ def select_minimum_disruption_plan(
     candidates = []
     all_root_stats = []
     priorities = tuple(group if priority_agents is None else priority_agents)
-    if selection_policy != "dag_aware":
+    if selection_policy != "marco":
         # Local baselines must not receive DAG-derived priority ordering.
         priorities = tuple(sorted(priorities))
     for priority_agent in priorities:

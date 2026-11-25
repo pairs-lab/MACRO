@@ -91,9 +91,9 @@ def _configure_environment(scene: dict, policy_override: str | None) -> None:
     if type(agent_count) is not int or agent_count <= 0:
         raise ValueError("scene.json requires a positive integer 'agent_count'")
 
-    policy = policy_override or scene.get("runtime_policy", "dag_aware")
+    policy = policy_override or scene.get("runtime_policy", "marco")
     if policy not in {
-        "dag_aware", "local_distance", "local_delay", "reroute_only"
+        "marco", "local_distance", "local_delay", "reroute_only"
     }:
         raise ValueError(f"Unsupported runtime policy: {policy!r}")
     planning_timeout = float(scene.get("planning_timeout_s", 30.0))
@@ -167,7 +167,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=("dag_aware", "local_distance", "local_delay", "reroute_only"),
+        choices=("marco", "local_distance", "local_delay", "reroute_only"),
         help="override runtime_policy from scene.json",
     )
     parser.add_argument("--camera", action="store_true", help="show robot POV windows")

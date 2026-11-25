@@ -387,7 +387,7 @@ def create_navigation_function(
             orderer = getattr(runtime, "order_conflict_priorities", None)
             priority_agents = (
                 orderer(participants, contexts)
-                if orderer is not None and RUNTIME_CONFLICT_POLICY == "dag_aware"
+                if orderer is not None and RUNTIME_CONFLICT_POLICY == "marco"
                 else tuple(sorted(participants))
             )
             candidate = select_minimum_disruption_plan(

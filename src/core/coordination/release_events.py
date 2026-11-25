@@ -9,7 +9,7 @@ import math
 import time
 
 from .planner import path_length, preferred_path_to_object, _astar_around_robot_bodies, _interaction_goals
-from .relocation_search import _timed_path_conflict, _path_conflict
+from .mdgs import _timed_path_conflict, _path_conflict
 
 
 def distance_prefix(path, limit):

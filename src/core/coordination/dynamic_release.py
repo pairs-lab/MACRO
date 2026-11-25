@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, wait
 from multiprocessing import get_context
 
 from .anticipated_delay import estimate_future_delays
-from .relocation_search import _remaining_dag_cost
+from .mdgs import _remaining_dag_cost
 from .release_events import predict_release_events
 
 _POOLS = {}
@@ -44,7 +44,8 @@ def _parallel_refinement(candidates, kwargs, stats, deadline, started, workers):
             pool = ProcessPoolExecutor(max_workers=workers, mp_context=get_context('spawn'))
             _POOLS[key] = pool
         futures = [pool.submit(_evaluate_hypothesis, c, kwargs) for c in candidates]
-        _, pending = wait(futures, timeout=max(0., deadline-time.perf_counter()))
+        _, pending = wait(futures, timeout=(None if math.isinf(deadline) else
+                                            max(0., deadline-time.perf_counter())))
         if pending:
             raise TimeoutError('parallel_hypothesis_budget')
         results = [f.result() for f in futures]
@@ -106,12 +107,34 @@ def stationary_service_chain(robots, tasks, evaluation):
     return result
 
 
+def branch_rank(candidate, participants, robots_by_id):
+    """Fixed rank kappa_k of (20) used to orient the new pairs of a branch.
+
+    Robots outside R_c and stationary robots are absent (rank 0 in the
+    reservation table), the priority robot has rank 1, and the displaced
+    robots follow in their order within u_k. Remaining moving members of R_c
+    share the next rank; the reservation table breaks those ties by nominal
+    task start time.
+    """
+    priority = candidate.get('priority_robot')
+    order = {} if priority is None else {priority: 1}
+    for step in candidate.get('relocations', ()):
+        order.setdefault(step['robot_id'], len(order) + 1)
+    last = len(order) + 1
+    members = set(participants) | set(candidate.get('enabled_robots', ()))
+    for robot_id in sorted(members - set(order)):
+        robot = robots_by_id.get(robot_id)
+        if robot is not None and robot.current_task is not None:
+            order[robot_id] = last
+    return order
+
+
 def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
                                   objects, navigation_cells, robot_radius,
                                   grid_size, speed, participants, stats,
                                   search_deadline, baseline_finishes,
-                                  baseline_distance, horizon=5., budget_s=5.,
-                                  hypothesis_workers=1,
+                                  baseline_distance, horizon=5., budget_s=None,
+                                  route_budget=None, hypothesis_workers=1,
                                   _allow_single=False):
     """Compare the whole pool with one common, two-pass reservation model."""
     if not 3. <= horizon <= 5.:
@@ -119,7 +142,13 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
     if not isinstance(hypothesis_workers, int) or hypothesis_workers < 1:
         raise ValueError('hypothesis_workers must be a positive integer')
     started = time.perf_counter()
-    deadline = min(started+budget_s, search_deadline if search_deadline is not None else math.inf)
+    # The default budget is deterministic: ``route_budget`` counts the
+    # continuation routes planned for the whole pool. A wall-clock budget is
+    # used only when one is given explicitly, since it makes the selected
+    # branch depend on machine load.
+    deadline = min(math.inf if budget_s is None else started+budget_s,
+                   search_deadline if search_deadline is not None else math.inf)
+    routes_planned = [0]
     model = 'guarded-release-checkpoints-stationary-chain-incremental-DAG-v5'
     def fallback(reason):
         stats['release_prediction'] = dict(status='fallback', reason=reason, model=model,
@@ -139,7 +168,7 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
             robot_radius=robot_radius, grid_size=grid_size, speed=speed,
             participants=participants, search_deadline=deadline,
             baseline_finishes=baseline_finishes, baseline_distance=baseline_distance,
-            horizon=horizon, budget_s=budget_s)
+            horizon=horizon, budget_s=budget_s, route_budget=route_budget)
         return _parallel_refinement(candidates, kwargs, stats, deadline, started,
                                     min(hypothesis_workers, len(candidates)))
     by_id = {r.robot_id: r for r in robots}
@@ -156,6 +185,9 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
         if time.perf_counter() >= deadline:
             raise TimeoutError('dynamic_event_budget')
         if key not in route_cache:
+            routes_planned[0] += 1
+            if route_budget is not None and routes_planned[0] > route_budget:
+                raise TimeoutError('dynamic_event_budget')
             route = compute()
             route_cache[key] = None if route is None else tuple(route)
         route = route_cache[key]
@@ -203,8 +235,7 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
         passes = []
         # External robots are already running and cannot be ordered to yield
         # by this hypothetical repair. Priority then precedes its own yielders.
-        order = {rid: index for index, rid in enumerate(
-            ([priority] if priority is not None else []) + sorted(set(participants)-{priority}))}
+        order = branch_rank(candidate, participants, by_id)
         try:
             for _ in range(2):
                 additional, info = estimate_future_delays(
@@ -247,5 +278,6 @@ def refine_dynamic_release_events(candidates, *, robots, tasks, task_status,
                              successor_tasks_per_robot=1, global_repair=False))
     stats['release_prediction'] = dict(status='applied', model=model, horizon_s=horizon,
                                       candidates_evaluated=len(pending), wall_time_s=time.perf_counter()-started,
-                                      censored_candidates=sum(any(p['censored'] for p in item[3]) for item in pending))
+                                      censored_candidates=sum(any(p['censored'] for p in item[3]) for item in pending),
+                                      routes_planned=routes_planned[0], route_budget=route_budget)
     return candidates

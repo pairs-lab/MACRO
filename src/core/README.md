@@ -6,7 +6,7 @@ This package must not import a simulator, GUI, Unity, Nav2 or ROS middleware.
 - `models.py`: robot snapshot/state schema.
 - `coordination/coordinator.py`: snapshot-based conflict candidate pipeline. The execution adapter supplies local resolution timing and may supply candidate-conditioned execution evaluation.
 - `coordination/planner.py`: A*, shortest-path trees and scoped geometry reuse.
-- `coordination/relocation_search.py`: bounded intervention search, candidate scoring and incremental remaining-DAG evaluation.
+- `coordination/mdgs.py`: Multi-branch Disjunctive Graph Search (MDGS): branch generation with composed clearance, mission-aware scoring and selection.
 - `coordination/dynamic_collision.py`, `clearance_geometry.py`, `native_geometry.py`: swept geometry and optional C++ kernels.
 - `coordination/release_events.py`, `anticipated_delay.py`, `dynamic_release.py`: guarded release and future reservation prediction.
 - `coordination/task_timing.py`: callback-based task timing for interaction adapters.

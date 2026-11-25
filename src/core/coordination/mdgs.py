@@ -1,19 +1,23 @@
-"""Bounded DFS and joint-staging search for local multi-robot conflict repair.
+"""Multi-branch Disjunctive Graph Search (MDGS), Sec. VII of the paper.
 
-The production pipeline disables DAG lower-bound pruning. Historical BnB
-diagnostic labels are retained for archive compatibility.
+Branch generation (VII-B): priority hypotheses H(R_h), Top-K clearance
+configurations scored by C_clear (16), and composed clearance through the
+enabling set (18), searched depth-first within B expansions and L branches per
+hypothesis. Each branch is then scored by its predicted remaining makespan
+(VII-C) and the best one is selected (VII-D). Runtime plans keep the
+historical ``relocations`` key for the clearance sequence M^pre.
 """
 
 from __future__ import annotations
 
 import math
 import time
+import itertools
 from collections import defaultdict
 
 from core import (
     optimize,
     order_dag_priorities,
-    clearance_yield_key,
 )
 
 from .dynamic_collision import swept_separation
@@ -28,11 +32,15 @@ from .planner import (
 )
 
 
-RELOCATION_PATH_BUDGET = 3
-DEFAULT_MAX_CANDIDATES_PER_ROOT = 12
-DEFAULT_MAX_EXPANDED_PER_ROOT = 64
-JOINT_SETUP_POOL_MULTIPLIER = 8
-JOINT_ROUTE_SCAN_MULTIPLIER = 8
+# K of the Top-K clearance selection and B of the per-hypothesis expansion
+# budget. K = 5 was selected on the grid benchmark (the paper's Sec. VIII
+# value is K = 3); B = 64.
+TOP_K = 5
+EXPANSION_BUDGET = 64
+# Complete branches kept per hypothesis; the search of H(R_h) stops there.
+BRANCH_LIMIT = 12
+# lambda_tau of C_clear (16); lambda_xi = 1 - lambda_tau.
+LAMBDA_TAU = 0.8
 
 
 class PlanningTimeoutError(TimeoutError):
@@ -90,48 +98,13 @@ def _candidate_stable_key(candidate):
     )
 
 
-def _select_spatially_diverse_steps(candidates, limit):
-    """Select a deterministic k-center subset from a geometric move pool.
-
-    The first representative is the fastest clearing move. Subsequent
-    representatives maximize their minimum endpoint distance from the chosen
-    set. This preserves short, long, lateral, and retreat alternatives without
-    enumerating named maneuver cases or prescribed retreat distances.
-    """
-    ordered = sorted(candidates, key=clearance_yield_key)
-    if limit is None or len(ordered) <= limit:
-        return ordered
-    selected = [ordered[0]]
-    selected_keys = {
-        (ordered[0]["destination"], tuple(ordered[0]["path"]))
-    }
-    while len(selected) < limit:
-        remaining = [
-            step for step in ordered
-            if (step["destination"], tuple(step["path"])) not in selected_keys
-        ]
-        if not remaining:
-            break
-        indexed = list(enumerate(remaining))
-        _, chosen = max(indexed, key=lambda item: (
-            min(
-                math.dist(item[1]["destination"], kept["destination"])
-                for kept in selected
-            ),
-            -item[0],
-        ))
-        selected.append(chosen)
-        selected_keys.add((chosen["destination"], tuple(chosen["path"])))
-    return selected
-
-
 def _select_resolution_candidate(candidates, selection_policy):
     """Select a resolution under the requested information boundary.
 
     The two local baselines are deliberately forbidden from using remaining-
     DAG makespan or propagated task-finish delay, including as tie-breakers.
     """
-    if selection_policy == "dag_aware":
+    if selection_policy == "marco":
         return optimize(candidates, evaluator=lambda candidate: candidate)[
             "candidate"
         ]
@@ -681,13 +654,35 @@ def _preferred_paths(
 
 
 def _path_conflict(first_path, second_path, clearance_cells):
+    """True if any cell of one path lies within ``clearance_cells`` of the other.
+
+    Exact pairwise test; the second path is bucketed on a grid of side
+    ``clearance_cells`` so only neighbouring buckets are compared.
+    """
     limit_squared = clearance_cells * clearance_cells
-    return any(
-        (first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2
-        <= limit_squared
-        for first in first_path
-        for second in second_path
-    )
+    if len(first_path) * len(second_path) <= 64 or clearance_cells <= 0:
+        return any(
+            (first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2
+            <= limit_squared
+            for first in first_path
+            for second in second_path
+        )
+    size = float(clearance_cells)
+    buckets = {}
+    for point in second_path:
+        buckets.setdefault(
+            (math.floor(point[0] / size), math.floor(point[1] / size)), []
+        ).append(point)
+    for point in first_path:
+        bx = math.floor(point[0] / size)
+        bz = math.floor(point[1] / size)
+        for dx in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                for other in buckets.get((bx + dx, bz + dz), ()):
+                    if ((point[0] - other[0]) ** 2 + (point[1] - other[1]) ** 2
+                            <= limit_squared):
+                        return True
+    return False
 
 
 def _distance_limited_path(path, distance_limit):
@@ -850,7 +845,7 @@ def _clearance_tree_prefixes(parent, settled, start, forbidden, centres,
     return prefixes
 
 
-def _nearest_feasible_relocations(
+def _clearance_candidates(
     *,
     mover_id,
     positions,
@@ -860,18 +855,25 @@ def _nearest_feasible_relocations(
     grid_size,
     speed,
     goal=None,
-    path_budget=RELOCATION_PATH_BUDGET,
+    path_budget=TOP_K,
     route_scan_budget=None,
+    enabling_ids=(),
+    cost_model=None,
 ):
-    """Return short, direction-diverse clearing moves, never goal-ranked.
+    """Return the Top-K clearance configurations of one blocker (Sec. VII-B).
 
-    Static continuation to the task goal remains a feasibility check only.
-    Top-K uses clearance time/margin and angular coverage so forward endpoints
-    cannot crowd out a feasible opposite-direction retreat before scoring.
+    Generate: one Dijkstra tree from the blocker reaches every cell outside
+    the protected passages. Select: each endpoint is scored by C_clear (16)
+    and Top-K keeps at most one endpoint per displacement direction. Static
+    continuation to the task goal remains a feasibility check only.
+
+    Robots in ``enabling_ids`` are not hard obstacles: an endpoint whose
+    route passes through one of them is kept and reports, in ``enabling``,
+    the robots of R_en (18) that must be cleared first. Every other robot
+    body is a hard obstacle.
     """
     start = positions[mover_id]
     from .clearance_geometry import protected_geometry, endpoint_margins
-    from core.yielding import _select_clearance_ranked
     corridor_geometry = protected_geometry(tuple(protected_paths.values()), robot_radius, grid_size)
     forbidden = corridor_geometry[0]
 
@@ -880,8 +882,14 @@ def _nearest_feasible_relocations(
     footprint = _disk_offsets(clearance_cells)
     occupied = set()
     protected_ids = set(protected_paths)
+    enabling = tuple(sorted(
+        robot_id for robot_id in enabling_ids
+        if robot_id != mover_id and robot_id in positions
+    ))
+    enabling_set = set(enabling)
     for robot_id, cell in positions.items():
-        if robot_id == mover_id or robot_id in protected_ids:
+        if (robot_id == mover_id or robot_id in protected_ids
+                or robot_id in enabling_set):
             continue
         occupied.update(
             (cell[0] + dx, cell[1] + dz)
@@ -906,16 +914,19 @@ def _nearest_feasible_relocations(
         start,
         goals,
         dynamic_obstacles=occupied,
-        # Direction coverage is not monotone in release length, so ordinary
-        # search evaluates every reachable goal. Ordered joint search passes
-        # an explicit scan budget because its outer candidate pool is already
-        # bounded; this avoids a full-grid scan at every counterfactual state.
+        # Direction coverage is not monotone in clearance length, so every
+        # reachable goal is scanned unless a caller bounds the scan.
         path_count=scan_count,
     )
     centres = tuple(cell for robot_id, cell in positions.items()
-                    if robot_id != mover_id)
+                    if robot_id != mover_id and robot_id not in enabling_set)
     prefixes = _clearance_tree_prefixes(
         parent, settled, start, forbidden, centres, clearance_cells, grid_size)
+    obstruction, penetration = _tree_obstruction_masks(
+        parent, settled, start, [positions[rid] for rid in enabling],
+        clearance_cells)
+    if cost_model is None:
+        cost_model = default_clearance_cost_model(robot_radius, grid_size, speed)
     eligible = []
     for endpoint in endpoints:
         valid, exited, _, distance = prefixes[endpoint]
@@ -931,26 +942,142 @@ def _nearest_feasible_relocations(
         distance = prefixes[endpoint][3]
         group = _direction_group(start, endpoint)
         delay = distance / (speed * grid_size)
-        # The old canonical key has no path yet at this point. One endpoint
-        # identifies one tree path; preserve its exact float coordinate key.
-        key = (float(delay), -float(margin), int(group),
+        mask = obstruction.get(endpoint, 0)
+        # tau_clear is the time until the blocker reaches z_clr. An enabling
+        # robot must first leave the route, i.e. travel at least its deepest
+        # overlap with the route, which bounds the wait from below.
+        enabling_wait = sum(
+            penetration[endpoint][index] / speed
+            for index in range(len(enabling)) if mask & (1 << index))
+        cost = clearance_cost(delay + enabling_wait, margin, cost_model)
+        blockers = tuple(sorted(
+            (rid for index, rid in enumerate(enabling) if mask & (1 << index)),
+            key=lambda rid: (math.dist(start, positions[rid]), rid),
+        ))
+        # One endpoint identifies one tree path, so the endpoint identifies the
+        # deduplication key (positions 3 and 4 of the key).
+        key = (float(cost), float(delay), int(group),
                (float(endpoint[0]), float(endpoint[1])), ())
-        candidates.append((key, (endpoint, distance, delay, group, margin), group))
+        candidates.append((key, (endpoint, distance, delay, group, margin,
+                                 cost, blockers), group))
     # Every endpoint has exactly one Dijkstra parent path, so destinations
     # uniquely determine path/deduplication ties. Rank metadata first and only
     # materialize the selected routes; angular diversity is unchanged.
-    retained = _select_clearance_ranked(candidates, path_budget)
+    retained = _top_k_per_direction(candidates, path_budget)
     selected = []
     protects = tuple(sorted(protected_paths))
-    for endpoint, distance, delay, group, margin in retained:
+    for endpoint, distance, delay, group, margin, cost, blockers in retained:
         route = [endpoint]
         while route[-1] in parent:
             route.append(parent[route[-1]])
         route.reverse()
         selected.append(dict(robot_id=mover_id, start=start, destination=endpoint,
                              distance=distance, delay=delay, direction_group=group,
-                             protects=protects, clearance_margin=margin, path=route))
+                             protects=protects, clearance_margin=margin,
+                             clearance_cost=cost, enabling=blockers, path=route))
     return selected
+
+
+def _top_k_per_direction(entries, count):
+    """Top-K directional diversity of Fig. 4(b).
+
+    Keep the best (lowest C_clear) cell of each displacement direction, then
+    the ``count`` best of those directions, so adjacent near-duplicates of one
+    cell never fill the budget. ``count=None`` returns every entry ranked.
+    """
+    ranked = sorted(entries, key=lambda item: item[0])
+    if count is None:
+        return [payload for _, payload, _ in ranked]
+    best = {}
+    for key, payload, direction in ranked:
+        best.setdefault(direction, (key, payload))
+    kept = sorted(best.values(), key=lambda item: item[0])[:max(0, int(count))]
+    return [payload for _, payload in kept]
+
+
+def default_clearance_cost_model(robot_radius, grid_size, speed,
+                                 lambda_tau=LAMBDA_TAU):
+    """Normalizers of (16): one robot diameter of travel time and of margin."""
+    diameter = 2.0 * robot_radius
+    return dict(lambda_tau=float(lambda_tau),
+                tau_ref=diameter / (speed * grid_size),
+                xi_ref=diameter)
+
+
+def clearance_cost(clearance_time, clearance_margin, model):
+    """C_clear of (16): weighted, normalized clearance time and margin."""
+    lambda_tau = model["lambda_tau"]
+    if not 0.0 <= lambda_tau <= 1.0:
+        raise ValueError("lambda_tau must lie in [0, 1]")
+    margin_term = 1.0 - min(max(0.0, clearance_margin) / model["xi_ref"], 1.0)
+    return (lambda_tau * clearance_time / model["tau_ref"]
+            + (1.0 - lambda_tau) * margin_term)
+
+
+def _body_violation_update(cell, previous, centre, cleared, clearance_cells):
+    """One step of the body rule; returns (violated, cleared).
+
+    A robot that starts in contact may only move away until separated; once
+    separated it may never come within ``clearance_cells`` again.
+    """
+    epsilon = 1e-9
+    distance = math.dist(cell, centre)
+    if cleared:
+        return distance <= clearance_cells + epsilon, True
+    if distance + epsilon < math.dist(previous, centre):
+        return True, False
+    return False, distance > clearance_cells + epsilon
+
+
+def _tree_obstruction_masks(parent, settled, start, centres, clearance_cells):
+    """Per tree cell: bitmask of the robots its route moves through, and the
+    deepest overlap (cells) of the route with each robot's clearance disc."""
+    if not centres:
+        return {}, {}
+    epsilon = 1e-9
+    cleared = 0
+    for index, centre in enumerate(centres):
+        if math.dist(start, centre) > clearance_cells + epsilon:
+            cleared |= 1 << index
+    state = {start: (cleared, 0)}
+    overlap = {start: tuple(0.0 for _ in centres)}
+    for cell in settled:
+        if cell == start or cell not in parent:
+            continue
+        previous = parent[cell]
+        cleared, violated = state[previous]
+        overlap[cell] = tuple(
+            max(depth, clearance_cells - math.dist(cell, centre))
+            for depth, centre in zip(overlap[previous], centres))
+        for index, centre in enumerate(centres):
+            bit = 1 << index
+            if violated & bit:
+                continue
+            hit, now_cleared = _body_violation_update(
+                cell, previous, centre, bool(cleared & bit), clearance_cells)
+            if hit:
+                violated |= bit
+            elif now_cleared:
+                cleared |= bit
+        state[cell] = (cleared, violated)
+    return {cell: masks[1] for cell, masks in state.items()}, overlap
+
+
+def _route_obstructions(route, mover_id, positions, clearance_cells):
+    """Robots (other than the mover) whose bodies a route moves through."""
+    epsilon = 1e-9
+    found = []
+    for robot_id, centre in positions.items():
+        if robot_id == mover_id:
+            continue
+        cleared = math.dist(route[0], centre) > clearance_cells + epsilon
+        for previous, cell in zip(route, route[1:]):
+            hit, cleared = _body_violation_update(
+                cell, previous, centre, cleared, clearance_cells)
+            if hit:
+                found.append(robot_id)
+                break
+    return sorted(found, key=lambda rid: (math.dist(route[0], positions[rid]), rid))
 
 
 def _order_standalone_priorities(
@@ -1011,11 +1138,10 @@ def _order_standalone_priorities(
 
 
 @with_geometry_cache
-def search_relocation_plan(
+def mdgs_resolve(
     *,
     robots,
     dag_robots=None,
-    root_mover_ids=None,
     priority_robot_ids=None,
     participant_ids=None,
     tasks,
@@ -1028,12 +1154,10 @@ def search_relocation_plan(
     max_depth=None,
     additional_candidates=(),
     external_protected_paths=None,
-    selection_policy="dag_aware",
-    exhaustive_candidates=False,
-    max_candidates_per_root=DEFAULT_MAX_CANDIDATES_PER_ROOT,
-    max_expanded_per_root=DEFAULT_MAX_EXPANDED_PER_ROOT,
+    selection_policy="marco",
+    branch_limit=BRANCH_LIMIT,
+    expansion_budget=EXPANSION_BUDGET,
     planning_timeout_s=None,
-    dag_bound_pruning=False,
     fixed_robot_ids=(),
     local_time_evaluator=None,
     diagnostics=None,
@@ -1042,24 +1166,29 @@ def search_relocation_plan(
     incremental_dag_evaluation=True,
     dag_candidate_refiner=None,
     preserve_priority_corridor=True,
-    negotiation_selector=None,
     allow_composed_clearance=True,
+    enabling_robots=(),
+    lambda_tau=LAMBDA_TAU,
 ):
     """Return the best complete conflict-resolution plan.
 
     Search starts only after a real contact/predicted swept conflict. Each root
     is ``H(r_p)``: ``r_p`` is the priority robot whose preferred current-task
-    path is preserved. Robots blocking that path may yield incrementally; the
-    priority robot is never treated as the yielding mover under its own root.
-    ``root_mover_ids`` is retained as a compatibility alias for callers that
-    predate the explicit ``priority_robot_ids`` name.
+    path is preserved. The robots of R_c on that passage are cleared one at a
+    time (MDGS, Sec. VII-B); a robot that obstructs a clearance move joins as
+    the next blocker (enabling set (18)), which composes the clearances. The
+    priority robot itself may be such an enabling robot, e.g. when it must
+    back away so that a boxed-in blocker can leave.
+
+    ``enabling_robots`` are stationary robots outside the contact group that
+    may join R_c in this way.
     """
     search_started = time.perf_counter()
     fixed_robot_ids = frozenset(fixed_robot_ids)
-    if max_candidates_per_root is not None and max_candidates_per_root < 1:
-        raise ValueError("max_candidates_per_root must be positive or None")
-    if max_expanded_per_root is not None and max_expanded_per_root < 1:
-        raise ValueError("max_expanded_per_root must be positive or None")
+    if branch_limit is not None and branch_limit < 1:
+        raise ValueError("branch_limit must be positive or None")
+    if expansion_budget is not None and expansion_budget < 1:
+        raise ValueError("expansion_budget must be positive or None")
     if planning_timeout_s is not None and planning_timeout_s <= 0:
         raise ValueError("planning_timeout_s must be positive or None")
     deadline = (
@@ -1069,23 +1198,26 @@ def search_relocation_plan(
     )
 
     robots_by_id = {robot.robot_id: robot for robot in robots}
+    outsider_ids = set()
+    for robot in enabling_robots:
+        if robot.robot_id not in robots_by_id:
+            robots_by_id[robot.robot_id] = robot
+            outsider_ids.add(robot.robot_id)
     dag_robots_by_id = {
         robot.robot_id: robot
         for robot in (robots if dag_robots is None else dag_robots)
     }
-    requested_priorities = priority_robot_ids
-    if requested_priorities is None:
-        requested_priorities = root_mover_ids
     requested_priorities = (
         None
-        if requested_priorities is None
-        else tuple(dict.fromkeys(requested_priorities))
+        if priority_robot_ids is None
+        else tuple(dict.fromkeys(priority_robot_ids))
     )
     search_ids = (
-        set(robots_by_id)
+        set(robots_by_id) - outsider_ids
         if participant_ids is None
         else set(participant_ids)
     )
+    outsider_ids -= search_ids
     unknown_ids = search_ids - set(robots_by_id)
     if unknown_ids:
         raise ValueError(f"Unknown conflict participants: {sorted(unknown_ids)}")
@@ -1093,8 +1225,12 @@ def search_relocation_plan(
         raise ValueError("Every priority robot must be a contact participant")
     if speed_cells_per_second <= 0:
         raise ValueError("speed_cells_per_second must be positive")
+    # Robots that may be displaced. Each robot is displaced at most once.
+    movable_ids = frozenset((search_ids | outsider_ids) - fixed_robot_ids)
     if max_depth is None:
-        max_depth = max(2, len(search_ids))
+        max_depth = max(1, len(movable_ids))
+    cost_model = default_clearance_cost_model(
+        robot_radius, grid_size, speed_cells_per_second, lambda_tau)
 
     initial_positions = {
         robot_id: robot.cell for robot_id, robot in robots_by_id.items()
@@ -1106,8 +1242,7 @@ def search_relocation_plan(
     # Candidate feasibility is policy-independent. DAG-based root ordering and
     # incremental candidate evaluation are independent ablation switches. The
     # local policies retain ascending robot-ID order and never evaluate a DAG.
-    evaluate_dag = selection_policy == "dag_aware"
-    dag_bound_pruning = False
+    evaluate_dag = selection_policy == "marco"
     baseline_makespan, baseline_task_distance, baseline_finishes = math.nan, 0.0, {}
     baseline_execution_durations = {}
     baseline_evaluation = None
@@ -1155,10 +1290,14 @@ def search_relocation_plan(
         speed_cells_per_second,
         search_ids,
     )
+    def reservation_owner(key):
+        return key[0] if isinstance(key, tuple) else key
+
+    # An enabling candidate is a body in the search state, not a reservation.
     external_protected_paths = {
         str(robot_id): list(route)
         for robot_id, route in (external_protected_paths or {}).items()
-        if route
+        if route and reservation_owner(robot_id) not in outsider_ids
     }
     nominal_local_distance = sum(
         path_length(route, grid_size) for route in initial_paths.values()
@@ -1179,13 +1318,6 @@ def search_relocation_plan(
             candidate.get("local_resolution_distance", 0.0) / metric_speed,
         )
     visited = {}
-    incumbent_makespan = min(
-        (
-            float(candidate["estimated_makespan"])
-            for candidate in feasible_leaves
-        ),
-        default=math.inf,
-    )
     stats = diagnostics if diagnostics is not None else {}
     stats.update({
         "roots": 0,
@@ -1205,17 +1337,19 @@ def search_relocation_plan(
         "priority_order": list(priority_order),
         "candidate_limit_pruned": 0,
         "expanded_limit_pruned": 0,
-        "max_candidates_per_root": max_candidates_per_root,
-        "max_expanded_per_root": max_expanded_per_root,
+        "branch_limit": branch_limit,
+        "expansion_budget": expansion_budget,
         "planning_timeout_s": planning_timeout_s,
-        "dag_bound_pruning": bool(dag_bound_pruning),
         "dag_priority": bool(evaluate_dag and use_dag_priority),
         "incremental_dag_evaluation": bool(
             evaluate_dag and incremental_dag_evaluation
         ),
         "lookahead_cells": lookahead_cells,
         "preserve_priority_corridor": bool(preserve_priority_corridor),
-        "relocation_top_k_model": "clearance-time-margin-angular-diversity",
+        "relocation_top_k_model": "weighted-clearance-cost-angular-diversity",
+        "clearance_cost_model": dict(cost_model),
+        "search_order": "depth-first-children-by-clearance-cost",
+        "enabling_candidates": sorted(outsider_ids),
         "generated_candidates": len(feasible_leaves),
     })
 
@@ -1290,28 +1424,7 @@ def search_relocation_plan(
             stats["dag_priority_diagnostics"] = priority_diagnostics
         stats["priority_order"] = list(priority_order)
 
-    def lower_bound(positions, relocations):
-        delay_by_robot = defaultdict(float)
-        for step in relocations:
-            affected = set(step["protects"]) | {step["robot_id"]}
-            for robot_id in affected:
-                delay_by_robot[robot_id] += step["delay"]
-        makespan, _ = timed_dag_cost(
-            tasks=tasks,
-            task_status=task_status,
-            robots_by_id=dag_robots_by_id,
-            positions=dag_positions(positions),
-            preferred_paths={},
-            objects=objects,
-            navigation_cells=navigation_cells,
-            grid_size=grid_size,
-            speed_cells_per_second=speed_cells_per_second,
-            relocation_delay_by_robot=delay_by_robot,
-            include_travel="lower_bound",
-        )
-        return makespan
-
-    def evaluate_leaf(priority_id, positions, paths, relocations):
+    def evaluate_leaf(priority_id, positions, paths, relocations, held_ids=()):
         delay_by_robot = defaultdict(float)
         relocation_distance = 0.0
         for step in relocations:
@@ -1329,6 +1442,8 @@ def search_relocation_plan(
         for step in relocations:
             if step["robot_id"] != priority_id:
                 delay_by_robot[step["robot_id"]] += priority_wait
+        for robot_id in held_ids:
+            delay_by_robot[robot_id] += priority_wait
         makespan, task_distance, finish_times = math.nan, sum(
             path_length(route, grid_size) for route in paths.values()), {}
         total_distance = relocation_distance + task_distance
@@ -1342,7 +1457,8 @@ def search_relocation_plan(
             + sum(path_length(route, grid_size) for route in paths.values())
             - nominal_local_distance,
         )
-        barrier_duration = sum(step["delay"] for step in relocations)
+        barrier_duration = (sum(step["delay"] for step in relocations)
+                            if relocations else priority_wait * bool(held_ids))
         return {
             "estimated_makespan": makespan,
             "estimated_remaining_DAG_makespan": makespan,
@@ -1365,200 +1481,201 @@ def search_relocation_plan(
             "delay_by_robot": dict(delay_by_robot),
         }
 
-    def dfs(priority_id, priority_path, positions, relocations, depth):
-        nonlocal incumbent_makespan, root_candidates, root_expanded
-        check_deadline()
-        if (
-            max_candidates_per_root is not None
-            and root_candidates >= max_candidates_per_root
-        ):
-            stats["candidate_limit_pruned"] += 1
-            return
-        moved_ids = frozenset(step["robot_id"] for step in relocations)
-        state_key = (priority_id, tuple(sorted(positions.items())), moved_ids)
-        committed_cost = (
-            sum(step["delay"] for step in relocations),
-            sum(step["distance"] for step in relocations),
-        )
-        if not exhaustive_candidates and state_key in visited and visited[state_key] <= committed_cost:
-            stats["duplicate_pruned"] += 1
-            return
-        visited[state_key] = committed_cost
-
-        # DAG lower bounds belong only to the proposed selector. Local
-        # baselines must not use DAG information to shape their search space.
-        if (
-            dag_bound_pruning
-            and selection_policy == "dag_aware"
-            and not exhaustive_candidates
-        ):
-            bound = lower_bound(positions, relocations)
-            if bound > incumbent_makespan:
-                stats["bound_pruned"] += 1
-                return
-        try:
-            paths = _preferred_paths(
-                robots_by_id,
-                positions,
-                navigation_cells,
-                speed_cells_per_second,
-                search_ids,
-            )
-        except RuntimeError:
-            stats["no_path_pruned"] += 1
-            return
-
-        # Legacy mode replans Pp around counterfactual holding poses. In
-        # corridor-preserving mode a yielder must actually clear the frozen
-        # route; a priority detour cannot make an inadequate bay look valid.
-        if relocations and not preserve_priority_corridor:
-            replanned_priority = select_dynamic_replan_path(
-                navigation_cells,
-                positions[priority_id],
-                robots_by_id[priority_id].goal,
-                stationary_robot_centres=(
-                    positions[robot_id]
-                    for robot_id in search_ids
-                    if robot_id != priority_id
-                ),
-                clearance_cells=clearance_cells,
-                robot_speed=speed_cells_per_second,
-                candidate_count=3,
-            )
-            if replanned_priority is not None:
-                priority_path = replanned_priority
-        paths[priority_id] = priority_path
-        priority_horizon = (clearance_corridor(priority_id, priority_path)
-                            if preserve_priority_corridor else
-                            _distance_limited_path(priority_path, lookahead_cells))
-
-        priority_blockers = []
+    def blocking_robots(priority_id, priority_horizon, positions, paths, moved_ids):
+        """Robots of R_c on the protected passage, nearest first."""
+        found = []
         for blocker_id in sorted(search_ids - {priority_id}):
             blocker_path = paths.get(blocker_id)
-            if blocker_id in moved_ids and blocker_path is not None:
-                # The mover is parked at its counterfactual holding pose.
-                # Its continuation is generated only after the priority
-                # horizon is released, so it is not active during this leaf.
-                blocked = _path_conflict(
-                    priority_horizon,
-                    [positions[blocker_id]],
-                    clearance_cells,
-                )
+            if blocker_id in moved_ids or blocker_path is None:
+                # A displaced robot is parked at its clearance configuration;
+                # its continuation starts only after the passage is released.
+                obstacle = [positions[blocker_id]]
+                blocked = _path_conflict(priority_horizon, obstacle, clearance_cells)
             else:
-                obstacle = (
-                    _distance_limited_path(blocker_path, lookahead_cells)
-                    if blocker_path is not None
-                    else [positions[blocker_id]]
-                )
                 blocked = _path_conflict(
                     priority_horizon,
-                    obstacle,
+                    _distance_limited_path(blocker_path, lookahead_cells),
                     clearance_cells,
                 )
                 if preserve_priority_corridor:
-                    blocked = blocked or _path_conflict(priority_horizon,
-                        [positions[blocker_id]], clearance_cells)
+                    blocked = blocked or _path_conflict(
+                        priority_horizon, [positions[blocker_id]], clearance_cells)
             if blocked:
-                priority_blockers.append(blocker_id)
+                found.append(blocker_id)
 
-        # A relocation hypothesis is complete once every yielding robot has a
-        # body-clear holding pose outside the frozen current+next corridor
-        # (or the short horizon in legacy mode). Do not require *all* routes to be
-        # mutually disjoint here: those routes start at different release
-        # times, are regenerated from the actual holding poses by the runtime,
-        # and remain guarded by swept collision detection.  Requiring static
-        # disjointness of all remaining routes made shared corridors falsely
-        # infeasible even though a safe park-pass-resume schedule existed.
-        #
-        # This changes only geometric feasibility.  Every shared-candidate
-        # policy receives the same pool and retains its own selector.
-        if not priority_blockers:
-            if not relocations:
+        def first_contact(robot_id):
+            centre = positions[robot_id]
+            for index, cell in enumerate(priority_horizon):
+                if math.dist(cell, centre) <= clearance_cells + 1e-9:
+                    return index
+            return len(priority_horizon)
+        return sorted(found, key=lambda rid: (first_contact(rid), rid))
+
+    def record_leaf(priority_id, positions, paths, relocations, cost,
+                    priority_horizon, held_ids=()):
+        """Append one complete branch u_k to the candidate set U_c^B (19)."""
+        try:
+            metrics = evaluate_leaf(priority_id, positions, paths, relocations,
+                                    held_ids=held_ids)
+        except RuntimeError:
+            stats["no_path_pruned"] += 1
+            return False
+        moved_ids = {step["robot_id"] for step in relocations}
+        relocation_sequence = [dict(step) for step in relocations]
+        planned_paths = {rid: list(route) for rid, route in paths.items()}
+        joined = sorted(moved_ids - search_ids)
+        feasible_leaves.append({
+            **metrics,
+            "strategy": "relocate",
+            "relocations": relocation_sequence,
+            "relocation_sequence": relocation_sequence,
+            "preferred_paths": planned_paths,
+            "planned_paths": planned_paths,
+            "selected_hypothesis": (f"H({priority_id} priority/wait)" if held_ids
+                                    else f"H({priority_id} priority)"),
+            "priority_robot": priority_id,
+            "moved_agents": list(dict.fromkeys(
+                step["robot_id"] for step in relocations)),
+            "held_agents": list(held_ids),
+            "enabled_robots": joined,
+            "participants": sorted(search_ids | set(joined)),
+            "clearance_cost": cost,
+            "final_positions": dict(positions),
+            "protected_priority_corridor": list(priority_horizon),
+        })
+        stats["generated_candidates"] = len(feasible_leaves)
+        stats["feasible"] += 1
+        return True
+
+    def expand_hypothesis(priority_id, root_priority_path):
+        """Depth-first MDGS search of one hypothesis H(R_h) (Sec. VII-B).
+
+        A state is the set of committed clearance maneuvers plus a stack of
+        pending clearances: a blocker whose clearance route still meets a
+        robot of its enabling set (18) waits on the stack while that robot is
+        cleared first, which yields the edge (c', c_b) of a composed
+        clearance. The search is depth-first and expands the children of a
+        state in increasing C_clear, so a long composed clearance is reached
+        within the budget; at most ``expansion_budget`` (B) expansions
+        and ``branch_limit`` complete branches per hypothesis.
+        """
+        root_candidates = 0
+        root_expanded = 0
+        sequence = itertools.count()
+        open_states = [(0.0, next(sequence), dict(initial_positions), (), ())]
+        while open_states:
+            check_deadline()
+            if (branch_limit is not None
+                    and root_candidates >= branch_limit):
+                stats["candidate_limit_pruned"] += 1
                 return
-            try:
-                metrics = evaluate_leaf(
-                    priority_id,
-                    positions,
-                    paths,
-                    relocations,
-                )
-            except RuntimeError:
-                stats["no_path_pruned"] += 1
-                return
-            relocation_sequence = [dict(step) for step in relocations]
-            planned_paths = {
-                robot_id: list(route) for robot_id, route in paths.items()
-            }
-            leaf = {
-                **metrics,
-                "strategy": "relocate",
-                "relocations": relocation_sequence,
-                "relocation_sequence": relocation_sequence,
-                "preferred_paths": planned_paths,
-                "planned_paths": planned_paths,
-                "selected_hypothesis": (
-                    f"H({priority_id} priority)"
-                ),
-                "priority_robot": priority_id,
-                "moved_agents": list(
-                    dict.fromkeys(step["robot_id"] for step in relocations)
-                ),
-                "final_positions": dict(positions),
-                "protected_priority_corridor": list(priority_horizon),
-            }
-            feasible_leaves.append(leaf)
-            stats["generated_candidates"] = len(feasible_leaves)
-            root_candidates += 1
-            incumbent_makespan = min(incumbent_makespan, metrics["estimated_makespan"])
-            stats["feasible"] += 1
-            return
-
-        if depth >= max_depth or (not allow_composed_clearance and relocations):
-            stats["depth_pruned"] += 1
-            return
-        if (
-            max_expanded_per_root is not None
-            and root_expanded >= max_expanded_per_root
-        ):
-            stats["expanded_limit_pruned"] += 1
-            return
-        root_expanded += 1
-        stats["expanded"] += 1
-        # Branch over direct horizon blockers first, then over the remaining
-        # participants as possible enabling moves. A direct blocker can be
-        # boxed in by a robot that does not itself intersect the priority
-        # horizon; relocating that support blocker first can open the only
-        # valid ordered sequence. Existing depth/candidate/expansion budgets
-        # keep this multi-agent permutation search bounded.
-        support_movers = sorted(
-            search_ids
-            - {priority_id}
-            - set(priority_blockers)
-            - moved_ids
-        )
-        movers = tuple(priority_blockers) + tuple(support_movers)
-
-        for mover_id in movers:
-            if mover_id == priority_id or mover_id in fixed_robot_ids:
-                continue
-            # A relocation is selected to clear every currently protected
-            # path. Moving the same robot twice is dominated by choosing its
-            # final feasible destination directly at the earlier node.
-            if mover_id in moved_ids:
+            cost, _, positions, relocations, pending = open_states.pop()
+            positions = dict(positions)
+            relocations = list(relocations)
+            pending = list(pending)
+            # Commit every pending clearance whose route has become free.
+            obstructing = []
+            while pending:
+                step = pending[-1]
+                obstructing = _route_obstructions(
+                    step["path"], step["robot_id"], positions, clearance_cells)
+                if obstructing:
+                    break
+                positions[step["robot_id"]] = step["destination"]
+                relocations.append(pending.pop())
+            moved_ids = frozenset(step["robot_id"] for step in relocations)
+            waiting_ids = frozenset(step["robot_id"] for step in pending)
+            state_key = (
+                priority_id,
+                tuple(sorted(positions.items())),
+                moved_ids,
+                tuple((step["robot_id"], step["destination"]) for step in pending),
+            )
+            if state_key in visited and visited[state_key] <= cost:
                 stats["duplicate_pruned"] += 1
                 continue
-            # A holding pose clears the active priority horizon. Other
-            # participants are frozen while relocation steps execute, so
-            # their bodies are handled by ``occupied`` and the body-clearance
-            # checks rather than treating all future
-            # task routes as simultaneous permanent obstacles.
-            protected = {priority_id: priority_horizon}
+            visited[state_key] = cost
+
+            if pending:
+                # Expand: the nearest robot of R_en(c_b) becomes the next
+                # blocker; it must clear the waiting blocker's route.
+                enabling_id = obstructing[0]
+                if (enabling_id not in movable_ids or enabling_id in moved_ids
+                        or enabling_id in waiting_ids):
+                    stats["no_path_pruned"] += 1
+                    continue
+                protected = {
+                    step["robot_id"]: list(step["path"]) for step in pending
+                }
+                if enabling_id != priority_id:
+                    protected[priority_id] = priority_horizon_of(
+                        priority_id, positions, root_priority_path, moved_ids)
+                mover_id = enabling_id
+            else:
+                try:
+                    paths = _preferred_paths(
+                        robots_by_id, positions, navigation_cells,
+                        speed_cells_per_second, search_ids | moved_ids)
+                except RuntimeError:
+                    stats["no_path_pruned"] += 1
+                    continue
+                priority_path = priority_route_of(
+                    priority_id, positions, root_priority_path, moved_ids, paths)
+                if priority_path is None:
+                    stats["no_path_pruned"] += 1
+                    continue
+                paths[priority_id] = priority_path
+                priority_horizon = horizon_of(priority_id, priority_path)
+                blockers = blocking_robots(
+                    priority_id, priority_horizon, positions, paths, moved_ids)
+                if not relocations:
+                    # Re-orientation branch (L_k = 0): every other robot of
+                    # R_c holds in place and passes after R_h. It exists only
+                    # if no held body stands on the protected passage.
+                    held = sorted(rid for rid in search_ids - {priority_id}
+                                  if robots_by_id[rid].current_task is not None)
+                    if held and not any(
+                            _path_conflict(priority_horizon, [positions[rid]],
+                                           clearance_cells)
+                            for rid in search_ids - {priority_id}):
+                        if record_leaf(priority_id, positions, paths, (), cost,
+                                       priority_horizon, held_ids=held):
+                            root_candidates += 1
+                    if not blockers:
+                        continue
+                elif not blockers:
+                    if record_leaf(priority_id, positions, paths, relocations,
+                                   cost, priority_horizon):
+                        root_candidates += 1
+                    continue
+                if relocations and not allow_composed_clearance:
+                    stats["depth_pruned"] += 1
+                    continue
+                mover_id = blockers[0]
+                if mover_id not in movable_ids or mover_id in moved_ids:
+                    stats["no_path_pruned"] += 1
+                    continue
+                protected = {priority_id: priority_horizon}
+            if len(relocations) + len(pending) >= max_depth:
+                stats["depth_pruned"] += 1
+                continue
+            if (expansion_budget is not None
+                    and root_expanded >= expansion_budget):
+                stats["expanded_limit_pruned"] += 1
+                return
+            root_expanded += 1
+            stats["expanded"] += 1
             protected.update({
                 robot_id: _distance_limited_path(route, lookahead_cells)
                 for robot_id, route in external_protected_paths.items()
                 if robot_id != mover_id
             })
-            candidates = _nearest_feasible_relocations(
+            enabling_ids = (
+                movable_ids - moved_ids - waiting_ids - {mover_id}
+                if allow_composed_clearance else ()
+            )
+            # Generate + Select (16): Top-K clearance configurations.
+            candidates = _clearance_candidates(
                 mover_id=mover_id,
                 positions=positions,
                 protected_paths=protected,
@@ -1567,218 +1684,69 @@ def search_relocation_plan(
                 grid_size=grid_size,
                 speed=speed_cells_per_second,
                 goal=robots_by_id[mover_id].goal,
+                enabling_ids=enabling_ids,
+                cost_model=cost_model,
             )
             if not candidates:
                 stats["no_path_pruned"] += 1
                 continue
             stats["nearest_feasible_pruned"] += max(
-                0,
-                len(navigation_cells) - len(candidates),
-            )
-            for step in candidates:
+                0, len(navigation_cells) - len(candidates))
+            # Candidates arrive in increasing C_clear; push them in reverse so
+            # the cheapest child is expanded first (LIFO stack).
+            for step in reversed(candidates):
                 # Reservation keys may identify several paths for one external
                 # robot (e.g. ('R3', 0)); they constrain geometry but are NOT
                 # participants that this repair may hold or assign delays to.
-                step = dict(step, protects=tuple(rid for rid in step['protects']
-                                                if rid in search_ids))
-                next_positions = dict(positions)
-                next_positions[mover_id] = step["destination"]
-                dfs(
-                    priority_id,
-                    priority_path,
-                    next_positions,
-                    relocations + (step,),
-                    depth + 1,
-                )
+                step = dict(step, protects=tuple(
+                    rid for rid in step["protects"] if rid in search_ids))
+                # Expand (17): insert the clearance node of this maneuver.
+                open_states.append((
+                    cost + step["clearance_cost"], next(sequence),
+                    positions, tuple(relocations), tuple(pending) + (step,)))
 
-    def ordered_joint_candidates(priority_id, *, fallback_full_scan=False):
-        """Generate bounded ordered multi-robot candidates from one pool.
+    def priority_route_of(priority_id, positions, root_priority_path, moved_ids, paths):
+        if priority_id in moved_ids:
+            # The priority robot itself was cleared for an enabling move; its
+            # passage is planned again from its clearance configuration.
+            return paths.get(priority_id)
+        if moved_ids and not preserve_priority_corridor:
+            replanned = select_dynamic_replan_path(
+                navigation_cells, positions[priority_id],
+                robots_by_id[priority_id].goal,
+                stationary_robot_centres=(
+                    positions[rid] for rid in search_ids if rid != priority_id),
+                clearance_cells=clearance_cells,
+                robot_speed=speed_cells_per_second,
+                candidate_count=3,
+            )
+            if replanned is not None:
+                return replanned
+        return root_priority_path
 
-        Each sequence moves the priority robot to one diverse counterfactual
-        state, then moves one conflicting participant relative to the newly
-        planned priority horizon. No retreat length, direction, passing bay,
-        or named maneuver is encoded. Feasibility and policy scoring decide
-        which (if any) ordered sequence is useful.
-        """
-        if not allow_composed_clearance:
-            return []
-        joint = []
-        setup_limit = (
-            DEFAULT_MAX_CANDIDATES_PER_ROOT
-            if max_candidates_per_root is None
-            else max_candidates_per_root
-        )
-        pool_budget = (
-            len(navigation_cells)
-            if fallback_full_scan
-            else min(
-                len(navigation_cells),
-                JOINT_SETUP_POOL_MULTIPLIER * setup_limit,
-            )
-        )
-        # The blocker can be an idle robot whose last task ended at the next
-        # fixture.  Restricting this joint staging search to ``working_ids``
-        # made cul-de-sacs falsely infeasible: the active priority robot had
-        # to back into a bay before the idle blocker could leave.  Every
-        # non-fixed conflict participant is a valid geometric blocker; task
-        # activity only determines which robots may be priority roots.
-        for blocker_id in sorted(
-            search_ids - {priority_id} - fixed_robot_ids
-        ):
-            setup_pool = _nearest_feasible_relocations(
-                mover_id=priority_id,
-                positions=initial_positions,
-                protected_paths={
-                    blocker_id: [initial_positions[blocker_id]]
-                },
-                navigation_cells=navigation_cells,
-                robot_radius=robot_radius,
-                grid_size=grid_size,
-                speed=speed_cells_per_second,
-                goal=robots_by_id[priority_id].goal,
-                path_budget=pool_budget,
-                route_scan_budget=pool_budget,
-            )
-            for setup in _select_spatially_diverse_steps(
-                setup_pool,
-                setup_limit,
-            ):
-                check_deadline()
-                staged = dict(initial_positions)
-                staged[priority_id] = setup["destination"]
-                try:
-                    staged_paths = _preferred_paths(
-                        robots_by_id,
-                        staged,
-                        navigation_cells,
-                        speed_cells_per_second,
-                        search_ids,
-                    )
-                except RuntimeError:
-                    continue
-                priority_path = staged_paths.get(priority_id)
-                if priority_path is None:
-                    continue
-                # Joint staging exists for the case where the direct blocker
-                # cannot leave until the priority robot first backs away.
-                # Unlike an ordinary one-sided yield, an idle blocker has no
-                # future task that will make it depart later. Park it outside
-                # the complete current-task route, otherwise receding-horizon
-                # search merely repeats the same two-step staging maneuver at
-                # every look-ahead boundary.
-                priority_horizon = (clearance_corridor(priority_id, priority_path)
-                                    if preserve_priority_corridor else list(priority_path))
-                parking_paths = _nearest_feasible_relocations(
-                    mover_id=blocker_id,
-                    positions=staged,
-                    protected_paths={priority_id: priority_horizon},
-                    navigation_cells=navigation_cells,
-                    robot_radius=robot_radius,
-                    grid_size=grid_size,
-                    speed=speed_cells_per_second,
-                    goal=robots_by_id[blocker_id].goal,
-                    route_scan_budget=(
-                        len(navigation_cells)
-                        if fallback_full_scan
-                        else JOINT_ROUTE_SCAN_MULTIPLIER
-                        * RELOCATION_PATH_BUDGET
-                    ),
-                )
-                for parking in parking_paths:
-                    final_positions = dict(staged)
-                    final_positions[blocker_id] = parking["destination"]
-                    try:
-                        final_paths = _preferred_paths(
-                            robots_by_id,
-                            final_positions,
-                            navigation_cells,
-                            speed_cells_per_second,
-                            search_ids,
-                        )
-                    except RuntimeError:
-                        continue
-                    final_priority_path = final_paths.get(priority_id)
-                    if final_priority_path is None:
-                        continue
-                    # Priority staging may change the start, but the blocker
-                    # must clear the route frozen BEFORE choosing its bay.
-                    if preserve_priority_corridor:
-                        final_paths[priority_id] = list(priority_path)
-                        final_horizon = priority_horizon
-                    else:
-                        final_horizon = list(final_priority_path)
-                    if any(
-                        robot_id != priority_id
-                        and _path_conflict(
-                            final_horizon,
-                            [final_positions[robot_id]],
-                            clearance_cells,
-                        )
-                        for robot_id in search_ids
-                    ):
-                        continue
-                    steps = (dict(setup), dict(parking))
-                    metrics = evaluate_leaf(
-                        priority_id,
-                        final_positions,
-                        final_paths,
-                        steps,
-                    )
-                    joint.append({
-                        **metrics,
-                        "strategy": "relocate",
-                        "relocations": list(steps),
-                        "relocation_sequence": list(steps),
-                        "preferred_paths": {
-                            robot_id: list(route)
-                            for robot_id, route in final_paths.items()
-                        },
-                        "planned_paths": {
-                            robot_id: list(route)
-                            for robot_id, route in final_paths.items()
-                        },
-                        "selected_hypothesis": (
-                            f"H({priority_id} priority/joint)"
-                        ),
-                        "priority_robot": priority_id,
-                        "moved_agents": [priority_id, blocker_id],
-                        "final_positions": final_positions,
-                        "protected_priority_corridor": list(final_horizon),
-                    })
-        joint.sort(key=lambda candidate: (
-            sum(step["delay"] for step in candidate["relocations"]),
-            -min(step["clearance_margin"] for step in candidate["relocations"]),
-            sum(step["distance"] for step in candidate["relocations"]),
-            tuple(
-                (step["robot_id"], step["destination"])
-                for step in candidate["relocations"]
-            ),
-        ))
-        # Reserve the ordinary Top-K relocation slots and expose the rest of
-        # the per-root budget as joint candidates. Geometry determines this
-        # shared pool; DAG/local objectives are applied only afterward.
-        joint_budget = max(
-            1,
-            setup_limit - RELOCATION_PATH_BUDGET,
-        )
-        return joint[:joint_budget]
+    def horizon_of(priority_id, priority_path):
+        return (clearance_corridor(priority_id, priority_path)
+                if preserve_priority_corridor else
+                _distance_limited_path(priority_path, lookahead_cells))
+
+    def priority_horizon_of(priority_id, positions, root_priority_path, moved_ids):
+        if priority_id in moved_ids:
+            route = select_preferred_path(
+                navigation_cells, positions[priority_id],
+                robots_by_id[priority_id].goal,
+                robot_speed=speed_cells_per_second, candidate_count=3)
+            if route is None:
+                return [positions[priority_id]]
+            return horizon_of(priority_id, route)
+        return horizon_of(priority_id, root_priority_path)
 
     for priority_id in priority_order:
         check_deadline()
         priority_path = initial_paths.get(priority_id)
         if priority_path is None:
             continue
-        root_candidates = 0
-        root_expanded = 0
         stats["roots"] += 1
-        dfs(priority_id, priority_path, initial_positions, (), 0)
-        for candidate in ordered_joint_candidates(
-            priority_id,
-            fallback_full_scan=(root_candidates == 0),
-        ):
-            feasible_leaves.append(candidate)
-            stats["generated_candidates"] = len(feasible_leaves)
-            stats["feasible"] += 1
+        expand_hypothesis(priority_id, priority_path)
 
     if not feasible_leaves:
         raise RuntimeError(
@@ -1796,10 +1764,11 @@ def search_relocation_plan(
                 # robots are held.  Completion of that finite barrier is the
                 # conservative time at which every participant can resume;
                 # subsequent task-route travel is outside conflict resolution.
-                candidate["local_resolution_delay"] = sum(
+                candidate["local_resolution_delay"] = (sum(
                     float(step["delay"])
-                    for step in candidate.get("relocations", ())
-                )
+                    for step in candidate["relocations"]
+                ) if candidate["relocations"] else max(
+                    candidate.get("delay_by_robot", {}).values(), default=0.0))
                 candidate["local_time_model"] = (
                     "sequential_relocation_barrier"
                 )
@@ -1853,15 +1822,6 @@ def search_relocation_plan(
         check_deadline()
     if selection_policy == "downstream_priority":
         selected = _select_downstream_candidate(ranked_candidates, priority_order)
-    elif selection_policy == "negotiation_adapted":
-        if negotiation_selector is None:
-            raise ValueError("negotiation_adapted requires a negotiation selector")
-        try:
-            selected = negotiation_selector(ranked_candidates, stats)
-            check_deadline()
-        except RuntimeError as error:
-            error.stats = stats
-            raise
     else:
         selected = _select_resolution_candidate(ranked_candidates, selection_policy)
     stats["candidate_evaluations"] = [
